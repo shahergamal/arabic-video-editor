@@ -1,0 +1,59 @@
+name: Build installers
+
+# Run by hand from the Actions tab ("Run workflow"), or by pushing a tag like v0.1.0.
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - name: Mac (Apple chip)
+            os: macos-latest
+            target: aarch64-apple-darwin
+          - name: Mac (Intel chip)
+            os: macos-latest
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: Interface packages
+        working-directory: app
+        run: npm ci
+      - name: Bundled ffmpeg
+        run: node scripts/fetch-ffmpeg.mjs ${{ matrix.target }}
+      - name: Check the bundled ffmpeg runs
+        if: matrix.target != 'x86_64-apple-darwin'
+        shell: bash
+        run: app/src-tauri/binaries/ffmpeg-${{ matrix.target }}* -hide_banner -version | head -1
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: app
+          args: --target ${{ matrix.target }}
+          tagName: v__VERSION__
+          releaseName: "محرر الفيديو v__VERSION__"
+          releaseBody: "نسخة تجريبية. نزّل الملف المناسب لجهازك من الأسفل."
+          releaseDraft: false
+          prerelease: true

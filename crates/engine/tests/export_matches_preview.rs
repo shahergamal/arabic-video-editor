@@ -26,6 +26,10 @@ fn exported_frames_match_preview_frames() {
         y: 0.75,
         box_width: 0.9,
         shadow: true,
+        outline: 0.0,
+        outline_color: [0, 0, 0, 255],
+        background: [0, 0, 0, 0],
+        align: "center".into(),
         start: 10,
         duration: 40,
     });

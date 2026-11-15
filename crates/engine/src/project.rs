@@ -149,10 +149,27 @@ pub struct TextLayer {
     pub box_width: f32,
     #[serde(default)]
     pub shadow: bool,
+    /// Outline around the letters, thickness as a share of the font size (0 = none).
+    #[serde(default)]
+    pub outline: f32,
+    #[serde(default = "black")]
+    pub outline_color: [u8; 4],
+    /// A box behind the text (alpha 0 = no box).
+    #[serde(default)]
+    pub background: [u8; 4],
+    /// Horizontal alignment: "center", "right" or "left".
+    #[serde(default = "center")]
+    pub align: String,
     pub start: u64,
     pub duration: u64,
 }
 
+fn black() -> [u8; 4] {
+    [0, 0, 0, 255]
+}
+fn center() -> String {
+    "center".into()
+}
 fn one() -> f32 {
     1.0
 }

@@ -116,3 +116,51 @@ fn english_inside_arabic_stays_left_to_right() {
     assert!(first_ar.x > m.x);
 }
 
+
+fn layer(text: &str) -> engine::TextLayer {
+    engine::TextLayer {
+        id: "t".into(),
+        text: text.into(),
+        font_family: "Cairo".into(),
+        size: 0.2,
+        weight: 700,
+        color: [255, 255, 255, 255],
+        x: 0.5,
+        y: 0.5,
+        box_width: 0.9,
+        shadow: false,
+        outline: 0.0,
+        outline_color: [255, 0, 0, 255],
+        background: [0, 0, 0, 0],
+        align: "center".into(),
+        start: 0,
+        duration: 1,
+    }
+}
+
+fn count(f: &engine::Frame, pred: impl Fn(&[u8]) -> bool) -> usize {
+    f.data.chunks_exact(4).filter(|p| pred(p)).count()
+}
+
+#[test]
+fn background_box_and_outline_are_drawn() {
+    let mut r = renderer();
+    let mut plain = engine::Frame::new(400, 200);
+    r.draw(&mut plain, &layer("مرحبا"));
+    let white = count(&plain, |p| p[0] > 200 && p[1] > 200);
+    assert!(white > 200, "text not drawn");
+
+    let mut boxed = engine::Frame::new(400, 200);
+    let mut l = layer("مرحبا");
+    l.background = [0, 0, 255, 255];
+    r.draw(&mut boxed, &l);
+    assert!(count(&boxed, |p| p[2] > 200 && p[0] < 50) > 2000, "no box behind the text");
+    // Corners of the frame stay empty.
+    assert_eq!(&boxed.data[0..3], &[0, 0, 0]);
+
+    let mut outlined = engine::Frame::new(400, 200);
+    let mut l = layer("مرحبا");
+    l.outline = 0.06;
+    r.draw(&mut outlined, &l);
+    assert!(count(&outlined, |p| p[0] > 200 && p[1] < 60) > 300, "no outline");
+}

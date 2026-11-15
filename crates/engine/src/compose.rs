@@ -32,6 +32,15 @@ impl Compositor {
         Self { text: TextRenderer::new(bundled_fonts), readers: HashMap::new(), stills: HashMap::new() }
     }
 
+    /// Like `new`, with several font folders (bundled fonts + fonts the user added).
+    pub fn with_font_dirs(dirs: &[PathBuf]) -> Self {
+        Self {
+            text: TextRenderer::with_dirs(dirs.iter().map(|d| d.as_path())),
+            readers: HashMap::new(),
+            stills: HashMap::new(),
+        }
+    }
+
     /// Renders timeline frame `index` of `project` at the given output size.
     /// Playing frames in order is fast; jumping around reopens the files.
     pub fn render(&mut self, project: &Project, index: u64, width: u32, height: u32) -> Result<Frame> {

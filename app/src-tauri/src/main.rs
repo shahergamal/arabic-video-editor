@@ -25,11 +25,18 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::probe_media,
+            commands::thumbnail,
+            commands::waveform,
             commands::list_fonts,
+            commands::add_font,
             commands::update_project,
             commands::recover_autosave,
+            commands::discard_autosave,
+            commands::list_recent,
+            commands::forget_recent,
             commands::save_project,
             commands::open_project,
+            commands::missing_media,
             commands::render_frame,
             commands::start_export,
             commands::cancel_export,

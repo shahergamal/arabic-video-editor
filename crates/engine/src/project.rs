@@ -7,7 +7,7 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-pub const FORMAT_VERSION: u32 = 2;
+pub const FORMAT_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Project {
@@ -101,6 +101,59 @@ pub struct Clip {
     pub fade_in: u64,
     #[serde(default)]
     pub fade_out: u64,
+    /// Playback speed: 2.0 plays twice as fast, 0.5 in slow motion.
+    #[serde(default = "one")]
+    pub speed: f32,
+    /// Colour adjustments for the picture.
+    #[serde(default, skip_serializing_if = "Adjust::is_neutral")]
+    pub adjust: Adjust,
+    /// Movement over time. Empty = `transform` all the way through.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub keyframes: Vec<Keyframe>,
+    /// How this clip comes in from the clip before it on the same track.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transition_in: Option<Transition>,
+}
+
+/// Colour adjustments. Every value runs from -1 to 1; 0 changes nothing.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
+pub struct Adjust {
+    #[serde(default)]
+    pub brightness: f32,
+    #[serde(default)]
+    pub contrast: f32,
+    #[serde(default)]
+    pub saturation: f32,
+    /// Below 0 is cooler (bluer), above 0 warmer (more orange).
+    #[serde(default)]
+    pub temperature: f32,
+}
+
+impl Adjust {
+    pub fn is_neutral(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// The clip's position and size at a moment, counted from the clip's start.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct Keyframe {
+    pub frame: u64,
+    pub transform: Transform,
+}
+
+/// Kinds: "dissolve", "black" (through black), "slide", "wipe", "zoom".
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Transition {
+    pub kind: String,
+    pub frames: u64,
+}
+
+/// Text animation. Kinds: "fade", "rise", "pop", "zoom", "words".
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TextAnim {
+    pub kind: String,
+    pub frames: u64,
 }
 
 impl Clip {
@@ -116,6 +169,45 @@ impl Clip {
             transform: Transform::default(),
             fade_in: 0,
             fade_out: 0,
+            speed: 1.0,
+            adjust: Adjust::default(),
+            keyframes: vec![],
+            transition_in: None,
+        }
+    }
+
+    /// Seconds into the source file shown at timeline frame `frame`.
+    pub fn source_time(&self, frame: u64, fps: crate::time::Fps) -> f64 {
+        self.source_in + fps.frame_to_seconds(frame.saturating_sub(self.start)) * self.speed.max(0.01) as f64
+    }
+
+    /// Position, size and opacity at timeline frame `frame`, following the
+    /// keyframes with a gentle ease in and out.
+    pub fn transform_at(&self, frame: u64) -> Transform {
+        if self.keyframes.is_empty() {
+            return self.transform;
+        }
+        let local = frame.saturating_sub(self.start);
+        let mut keys = self.keyframes.clone();
+        keys.sort_by_key(|k| k.frame);
+        let first = keys[0];
+        let last = *keys.last().unwrap();
+        if local <= first.frame {
+            return first.transform;
+        }
+        if local >= last.frame {
+            return last.transform;
+        }
+        let i = keys.iter().position(|k| k.frame > local).unwrap();
+        let (a, b) = (keys[i - 1], keys[i]);
+        let t = (local - a.frame) as f32 / (b.frame - a.frame).max(1) as f32;
+        let e = t * t * (3.0 - 2.0 * t);
+        let mix = |x: f32, y: f32| x + (y - x) * e;
+        Transform {
+            scale: mix(a.transform.scale, b.transform.scale),
+            x: mix(a.transform.x, b.transform.x),
+            y: mix(a.transform.y, b.transform.y),
+            opacity: mix(a.transform.opacity, b.transform.opacity),
         }
     }
 
@@ -128,6 +220,12 @@ impl Clip {
     pub fn has_picture(&self) -> bool {
         self.media != MediaKind::Audio
     }
+}
+
+/// One picture to draw for a frame; see [`Project::layers_at`].
+pub struct Layer<'a> {
+    pub clip: &'a Clip,
+    pub transition: Option<(&'a Transition, f32)>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -162,6 +260,10 @@ pub struct TextLayer {
     pub align: String,
     pub start: u64,
     pub duration: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anim_in: Option<TextAnim>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anim_out: Option<TextAnim>,
 }
 
 fn black() -> [u8; 4] {
@@ -236,6 +338,26 @@ impl Project {
             .collect()
     }
 
+    /// What to draw at `frame`, bottom to top. During a transition the
+    /// outgoing clip is listed first (it keeps playing past its end), then
+    /// the incoming clip with how far the transition has got (0 to 1).
+    pub fn layers_at(&self, frame: u64) -> Vec<Layer<'_>> {
+        let mut out = vec![];
+        for t in self.tracks.iter().filter(|t| t.kind == TrackKind::Video && !t.hidden) {
+            let Some(b) = t.clips.iter().rev().find(|c| c.has_picture() && c.covers(frame)) else { continue };
+            let mut progress = None;
+            if let Some(tr) = b.transition_in.as_ref().filter(|tr| tr.frames > 0 && frame < b.start + tr.frames) {
+                let before = t.clips.iter().filter(|c| c.id != b.id && c.has_picture()).find(|c| c.end() == b.start);
+                if let Some(a) = before {
+                    out.push(Layer { clip: a, transition: None });
+                }
+                progress = Some((tr, (frame - b.start) as f32 / tr.frames as f32));
+            }
+            out.push(Layer { clip: b, transition: progress });
+        }
+        out
+    }
+
     /// Every clip whose sound is heard in the export.
     pub fn audible_clips(&self) -> Vec<&Clip> {
         self.tracks.iter().filter(|t| !t.muted).flat_map(|t| t.clips.iter()).filter(|c| c.media != MediaKind::Image).collect()
@@ -295,5 +417,42 @@ impl Project {
             }
         };
         &mut self.tracks[i]
+    }
+}
+
+impl Project {
+    /// The same edit in another shape (e.g. a 9:16 reel as a 16:9 video).
+    /// Texts keep their place as a share of the frame. With `fill`, pictures
+    /// that filled the old frame are enlarged to fill the new one; small
+    /// pictures (picture-in-picture) are left as they are.
+    /// `source_size` tells the size of each source file.
+    pub fn reframed(&self, width: u32, height: u32, fill: bool, source_size: impl Fn(&Path) -> Option<(u32, u32)>) -> Self {
+        let mut p = self.clone();
+        let cover = |src: (u32, u32), w: u32, h: u32| {
+            let (sw, sh) = (src.0.max(1) as f32, src.1.max(1) as f32);
+            let fit = (w as f32 / sw).min(h as f32 / sh);
+            let fill = (w as f32 / sw).max(h as f32 / sh);
+            fill / fit
+        };
+        if fill {
+            for t in &mut p.tracks {
+                for c in t.clips.iter_mut().filter(|c| c.has_picture()) {
+                    let Some(src) = source_size(&c.source) else { continue };
+                    let (old, new) = (cover(src, self.width, self.height), cover(src, width, height));
+                    let fix = |tr: &mut Transform| {
+                        if tr.x.abs() < 0.01 && tr.y.abs() < 0.01 && tr.scale >= 0.99 {
+                            tr.scale = new * (tr.scale / old).max(1.0);
+                        }
+                    };
+                    fix(&mut c.transform);
+                    for k in &mut c.keyframes {
+                        fix(&mut k.transform);
+                    }
+                }
+            }
+        }
+        p.width = width;
+        p.height = height;
+        p
     }
 }

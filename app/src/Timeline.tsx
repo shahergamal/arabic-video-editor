@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { mediaInfo, thumbnailOf, waveformOf } from "./api";
 import { addTrack, place, removeTrack, snap } from "./edits";
+import { speedOf } from "./motion";
 import { useT } from "./i18n";
 import type { Clip, Project, TextLayer, Track } from "./types";
 import { fileName, formatTime, fpsValue, projectDuration } from "./types";
@@ -131,13 +132,13 @@ export function Timeline({ project, frame, selected, onSeek, onSelect, onCommit 
       const isAudioClip = o.media === "audio";
       if (target && !target.locked && (target.kind === "audio") === isAudioClip) trackId = target.id;
     } else if (drag.mode === "trimStart") {
-      const minStart = o.media === "image" ? 0 : Math.max(0, o.start - Math.floor(o.source_in * fps));
+      const minStart = o.media === "image" ? 0 : Math.max(0, o.start - Math.floor((o.source_in * fps) / speedOf(o)));
       let s = snapped(o.start + df, o.id);
       s = Math.min(o.start + o.duration - 1, Math.max(minStart, s));
       const d = s - o.start;
-      next = { ...o, start: s, duration: o.duration - d, source_in: o.media === "image" ? 0 : o.source_in + d / fps };
+      next = { ...o, start: s, duration: o.duration - d, source_in: o.media === "image" ? 0 : o.source_in + (d / fps) * speedOf(o) };
     } else {
-      const maxEnd = o.start + Math.floor((srcLen - o.source_in) * fps);
+      const maxEnd = o.start + Math.floor(((srcLen - o.source_in) * fps) / speedOf(o));
       let end = snapped(o.start + o.duration + df, o.id);
       end = Math.max(o.start + 1, Math.min(maxEnd, end));
       next.duration = end - o.start;
@@ -325,7 +326,7 @@ function ClipView(props: {
       ctx.clearRect(0, 0, w, h);
       ctx.fillStyle = "rgba(255,255,255,0.55)";
       const from = clip.source_in / props.sourceDuration!;
-      const span = clip.duration / props.fps / props.sourceDuration!;
+      const span = ((clip.duration / props.fps) * speedOf(clip)) / props.sourceDuration!;
       for (let px = 0; px < w; px++) {
         const i = Math.floor((from + (px / w) * span) * peaks.length);
         const v = (peaks[Math.min(peaks.length - 1, Math.max(0, i))] ?? 0) * h;
@@ -335,7 +336,7 @@ function ClipView(props: {
     return () => {
       alive = false;
     };
-  }, [clip.source, clip.source_in, clip.duration, clip.media, width, props.fps, props.sourceDuration]);
+  }, [clip.source, clip.source_in, clip.duration, clip.media, clip.speed, width, props.fps, props.sourceDuration]);
 
   return (
     <div
@@ -346,6 +347,9 @@ function ClipView(props: {
     >
       <span className="clip-name">{fileName(clip.source)}</span>
       {clip.media !== "image" && <canvas ref={canvas} className="wave" />}
+      {clip.transition_in && <span className="trans" style={{ width: (clip.transition_in.frames / clip.duration) * 100 + "%" }} />}
+      {speedOf(clip) !== 1 && <span className="speed">{speedOf(clip)}×</span>}
+      {!!clip.keyframes?.length && <span className="moving">◆</span>}
       {clip.fade_in > 0 && <span className="fade in" style={{ width: (clip.fade_in / clip.duration) * 100 + "%" }} />}
       {clip.fade_out > 0 && <span className="fade out" style={{ width: (clip.fade_out / clip.duration) * 100 + "%" }} />}
     </div>

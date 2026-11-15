@@ -135,6 +135,8 @@ fn layer(text: &str) -> engine::TextLayer {
         align: "center".into(),
         start: 0,
         duration: 1,
+        anim_in: None,
+        anim_out: None,
     }
 }
 

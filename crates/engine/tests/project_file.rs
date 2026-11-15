@@ -21,6 +21,8 @@ fn sample() -> Project {
         align: "center".into(),
         start: 0,
         duration: 90,
+        anim_in: None,
+        anim_out: None,
     });
     p
 }

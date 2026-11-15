@@ -32,6 +32,8 @@ fn exported_frames_match_preview_frames() {
         align: "center".into(),
         start: 10,
         duration: 40,
+        anim_in: None,
+        anim_out: None,
     });
 
     let mut comp = Compositor::new(Some(&common::fonts_dir()));

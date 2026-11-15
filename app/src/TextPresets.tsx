@@ -11,12 +11,12 @@ export const PRESETS: Preset[] = [
   { key: "presetCaption", text: "سطر الترجمة هنا", fontPref: ["Almarai", "Cairo"], size: 0.038, weight: 700, color: [255, 255, 255, 255], x: 0.5, y: 0.72, box_width: 0.86, shadow: false, outline: 0.06, outline_color: [0, 0, 0, 255], background: [0, 0, 0, 0], align: "center" },
 ];
 
-export function TextPresets({ families, onAdd }: { families: string[]; onAdd: (t: Omit<TextLayer, "id" | "start" | "duration">) => void }) {
+export function TextPresets({ families, brandFont, onAdd }: { families: string[]; brandFont?: string | null; onAdd: (t: Omit<TextLayer, "id" | "start" | "duration">) => void }) {
   const t = useT();
   return (
     <div className="panel-body presets">
       {PRESETS.map(({ key, fontPref, ...p }) => {
-        const font_family = fontPref.find((f) => families.includes(f)) ?? families[0] ?? "Cairo";
+        const font_family = [brandFont ?? "", ...fontPref].find((f) => families.includes(f)) ?? families[0] ?? "Cairo";
         const css = `rgb(${p.color.slice(0, 3).join(",")})`;
         return (
           <button key={key} className="preset" onClick={() => onAdd({ ...p, font_family })}>

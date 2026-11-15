@@ -2,6 +2,7 @@
 // which is what makes undo safe.
 import type { Clip, MediaKind, Project, Track } from "./types";
 import { IDENTITY, newId } from "./types";
+import { keyframesFrom, speedOf } from "./motion";
 
 const fpsOf = (p: Project) => p.fps.num / p.fps.den;
 
@@ -24,8 +25,10 @@ export function splitAt(p: Project, frame: number, clipId?: string): Project {
           id: newId(),
           start: frame,
           duration: c.duration - first,
-          source_in: c.source_in + first / fps,
+          source_in: c.source_in + (first / fps) * speedOf(c),
           fade_in: 0,
+          transition_in: null,
+          keyframes: keyframesFrom(c, first),
         });
       } else clips.push(c);
     }
@@ -76,7 +79,7 @@ export function place(p: Project, trackId: string, clip: Clip): Project {
         if (cs < s) out.push({ ...c, duration: s - cs, fade_out: 0 });
         if (ce > e) {
           const cut = e - cs;
-          out.push({ ...c, id: cs < s ? newId() : c.id, start: e, duration: ce - e, source_in: c.source_in + cut / fps, fade_in: 0 });
+          out.push({ ...c, id: cs < s ? newId() : c.id, start: e, duration: ce - e, source_in: c.source_in + (cut / fps) * speedOf(c), fade_in: 0, transition_in: null, keyframes: keyframesFrom(c, cut) });
         }
       }
     }

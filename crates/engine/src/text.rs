@@ -109,6 +109,13 @@ impl TextRenderer {
 
     /// Draws one text layer onto a frame.
     pub fn draw(&mut self, frame: &mut Frame, layer: &TextLayer) {
+        self.draw_with(frame, layer, None);
+    }
+
+    /// Draws the text with only part of it showing: `words` from 0 to 1 is
+    /// how far the word-by-word reveal has got. Whole words appear one after
+    /// another (in reading order), so Arabic letters always stay joined.
+    pub fn draw_with(&mut self, frame: &mut Frame, layer: &TextLayer, words: Option<f32>) {
         if layer.text.trim().is_empty() {
             return;
         }
@@ -136,6 +143,40 @@ impl TextRenderer {
         let ox = (cx - box_w / 2.0).round() as i32;
         let oy = (cy - block_h / 2.0).round() as i32;
 
+        // For the word reveal: how visible each column of each line is.
+        let mask = words.map(|p| {
+            let starts: Vec<usize> = layer
+                .text
+                .char_indices()
+                .filter(|&(i, ch)| !ch.is_whitespace() && (i == 0 || layer.text[..i].ends_with(char::is_whitespace)))
+                .map(|(i, _)| i)
+                .collect();
+            let n = starts.len().max(1) as f32;
+            let width = box_w.ceil() as usize + 2;
+            let mut lines = vec![];
+            for run in buf.layout_runs() {
+                let mut cols = vec![0f32; width];
+                for g in run.glyphs.iter() {
+                    let k = starts.iter().rposition(|&s| s <= g.start).unwrap_or(0) as f32;
+                    let a = (p * n - k).clamp(0.0, 1.0);
+                    let x0 = g.x.floor().max(0.0) as usize;
+                    let x1 = ((g.x + g.w).ceil() as usize + 1).min(width);
+                    for c in cols.iter_mut().take(x1).skip(x0) {
+                        *c = c.max(a);
+                    }
+                }
+                lines.push((run.line_top, run.line_top + run.line_height, cols));
+            }
+            lines
+        });
+        let visible = |x: i32, y: i32| -> f32 {
+            let Some(lines) = &mask else { return 1.0 };
+            let yf = y as f32;
+            let line = lines.iter().find(|(t, b, _)| yf >= *t && yf < *b).or(if yf < 0.0 { lines.first() } else { lines.last() });
+            line.and_then(|(_, _, cols)| cols.get(x.max(0) as usize).copied()).unwrap_or(0.0)
+        };
+        let scaled = |c: u8, v: f32| (c as f32 * v).round() as u8;
+
         // A box behind the text, hugging the lines with some padding.
         if layer.background[3] > 0 && min_x <= max_x {
             let pad = px * 0.35;
@@ -162,7 +203,7 @@ impl TextRenderer {
         if layer.shadow {
             let off = (px * 0.06).round().max(1.0) as i32;
             buf.draw(&mut self.fonts, &mut self.cache, Color::rgba(0, 0, 0, 160), |x, y, w, h, c| {
-                fill(frame, ox + x + off, oy + y + off, w, h, [0, 0, 0, 255], c.a());
+                fill(frame, ox + x + off, oy + y + off, w, h, [0, 0, 0, 255], scaled(c.a(), visible(x, y)));
             });
         }
         if layer.outline > 0.0 {
@@ -174,12 +215,12 @@ impl TextRenderer {
                 let ang = k as f32 / steps as f32 * std::f32::consts::TAU;
                 let (dx, dy) = ((ang.cos() * radius).round() as i32, (ang.sin() * radius).round() as i32);
                 buf.draw(&mut self.fonts, &mut self.cache, Color::rgba(orr, og, ob, oa), |x, y, w, h, c| {
-                    fill(frame, ox + x + dx, oy + y + dy, w, h, [orr, og, ob, 255], c.a());
+                    fill(frame, ox + x + dx, oy + y + dy, w, h, [orr, og, ob, 255], scaled(c.a(), visible(x, y)));
                 });
             }
         }
         buf.draw(&mut self.fonts, &mut self.cache, Color::rgba(r, g, b, a), |x, y, w, h, c| {
-            fill(frame, ox + x, oy + y, w, h, [r, g, b, 255], c.a());
+            fill(frame, ox + x, oy + y, w, h, [r, g, b, 255], scaled(c.a(), visible(x, y)));
         });
         self.layouts.insert(key, buf);
 

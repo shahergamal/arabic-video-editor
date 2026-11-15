@@ -92,9 +92,15 @@ pub struct FrameReader {
 
 impl FrameReader {
     pub fn open(path: &Path, start_seconds: f64, width: u32, height: u32, fps: Fps) -> Result<Self> {
+        Self::open_at_speed(path, start_seconds, width, height, fps, 1.0)
+    }
+
+    /// Like `open`, playing the file `speed` times faster (0.5 = slow motion).
+    pub fn open_at_speed(path: &Path, start_seconds: f64, width: u32, height: u32, fps: Fps, speed: f32) -> Result<Self> {
         // Fit the picture inside the frame; the rest stays see-through so
         // tracks underneath show (black shows if there is nothing below).
-        let filter = format!("fps={fps},{}", fit_filter(width, height), fps = fps.as_ffmpeg());
+        let retime = if (speed - 1.0).abs() > 1e-4 { format!("setpts=PTS/{speed:.6},") } else { String::new() };
+        let filter = format!("{retime}fps={fps},{}", fit_filter(width, height), fps = fps.as_ffmpeg());
         let mut child = command(ffmpeg_path())
             .args(["-v", "error", "-nostdin"])
             .args(["-ss", &format!("{start_seconds:.6}")])
@@ -186,4 +192,30 @@ impl Drop for FrameReader {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
+}
+
+/// Whether a video is big enough that editing is smoother with a proxy.
+pub fn wants_proxy(info: &MediaInfo) -> bool {
+    info.width.max(info.height) > 1920 || info.width.min(info.height) > 1080
+}
+
+/// Makes a small, quick-to-seek copy of a video for smooth preview: the
+/// short side at 540 pixels, a key frame every 10 frames, no sound. Written
+/// under a temporary name and renamed when complete.
+pub fn make_proxy(src: &Path, out: &Path) -> Result<()> {
+    let tmp = out.with_extension("part.mp4");
+    let res = command(ffmpeg_path())
+        .args(["-v", "error", "-y", "-nostdin", "-i"])
+        .arg(src)
+        .args(["-map", "0:v:0", "-an", "-vf", "scale='if(gt(iw,ih),-2,540)':'if(gt(iw,ih),540,-2)'"])
+        .args(["-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-g", "10", "-pix_fmt", "yuv420p"])
+        .arg(&tmp)
+        .output()
+        .map_err(Error::FfmpegMissing)?;
+    if !res.status.success() {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(Error::Ffmpeg(String::from_utf8_lossy(&res.stderr).into()));
+    }
+    std::fs::rename(&tmp, out)?;
+    Ok(())
 }

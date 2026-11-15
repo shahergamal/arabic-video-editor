@@ -1,5 +1,21 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { FontInfo, MediaInfo, Project, Recent } from "./types";
+import type { Brand, FontInfo, MediaInfo, Project, Recent } from "./types";
+
+export interface ExportJob {
+  path: string;
+  width: number;
+  height: number;
+  crf: number;
+  fill?: boolean;
+}
+
+export interface TemplateInfo {
+  name: string;
+  path: string;
+  width: number;
+  height: number;
+  texts: number;
+}
 
 export const api = {
   probe: (path: string) => invoke<MediaInfo>("probe_media", { path }),
@@ -17,9 +33,17 @@ export const api = {
   missing: (project: Project) => invoke<string[]>("missing_media", { project }),
   frame: (index: number, width: number, height: number) =>
     invoke<ArrayBuffer>("render_frame", { index, width, height }),
-  startExport: (path: string, scale: number, crf: number) =>
-    invoke<void>("start_export", { request: { path, scale, crf } }),
+  startExport: (jobs: ExportJob[]) => invoke<void>("start_export", { jobs }),
+  saveTemplate: (project: Project, name: string) => invoke<void>("save_template", { project, name }),
+  templates: () => invoke<TemplateInfo[]>("list_templates"),
+  deleteTemplate: (path: string) => invoke<void>("delete_template", { path }),
+  loadTemplate: (path: string) => invoke<Project>("load_template", { path }),
+  brand: () => invoke<Brand | null>("get_brand"),
+  setBrand: (brand: Brand) => invoke<void>("set_brand", { brand }),
   cancelExport: () => invoke<void>("cancel_export"),
+  captionModels: () => invoke<{ id: string; mb: number; downloaded: boolean }[]>("caption_models"),
+  downloadModel: (id: string) => invoke<void>("download_model", { id }),
+  transcribe: (model: string, language: string) => invoke<void>("transcribe", { model, language }),
 };
 
 /** Cached media info and waveforms, so the timeline asks only once per file. */

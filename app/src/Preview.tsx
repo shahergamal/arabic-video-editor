@@ -103,7 +103,9 @@ export function Preview({ project, revision, frame, playing, onFrame, onStop }: 
           el.preload = "auto";
           players.set(c.id, el);
         }
-        const want = c.source_in / fps + (target - c.start) / fps;
+        const speed = c.speed ?? 1;
+        const want = c.source_in + ((target - c.start) / fps) * speed;
+        if (el.playbackRate !== speed) el.playbackRate = speed;
         if (el.paused || Math.abs(el.currentTime - want) > 0.2) {
           el.currentTime = want;
           el.play().catch(() => {});

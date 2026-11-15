@@ -245,3 +245,14 @@ progress { width: 100%; accent-color: var(--accent); }
 .issues li { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 6px 8px; border-radius: 8px; background: var(--raised); border-inline-start: 3px solid var(--accent); font-size: 13px; }
 .issues li button { padding: 2px 8px; font-size: 12px; flex-shrink: 0; }
 .small { font-size: 12px; }
+
+/* Phase 4 */
+.angles { display: flex; flex-wrap: wrap; gap: 6px; }
+.angles button { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px; min-width: 64px; }
+.angles button .thumb { width: 88px; height: 50px; background: #000 center / cover no-repeat; border-radius: 4px; display: block; }
+.angles button.on { outline: 2px solid var(--accent); }
+.angles.compact button { min-width: 30px; padding: 4px 8px; }
+.angles.compact button.on { background: var(--accent); color: var(--accent-ink); }
+.media-tile .hdr { position: absolute; top: 4px; inset-inline-start: 4px; font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 4px; background: #f5c542; color: #1b1b1b; }
+.pre { white-space: pre-line; }
+.home .row { display: flex; gap: 8px; }

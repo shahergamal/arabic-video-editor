@@ -33,21 +33,25 @@ export function MediaPanel({ items, onImport, onAdd }: Props) {
       {items.length === 0 && <p className="hint">{t("importHint")}</p>}
       <div className="media-grid">
         {items.map((m) => (
-          <MediaTile key={m.path} item={m} onAdd={() => onAdd(m)} label={t("addToTimeline")} />
+          <MediaTile key={m.path} item={m} onAdd={() => onAdd(m)} label={t("addToTimeline")} hdrHint={t("hdrHint")} />
         ))}
       </div>
     </div>
   );
 }
 
-function MediaTile({ item, onAdd, label }: { item: MediaItem; onAdd: () => void; label: string }) {
+function MediaTile({ item, onAdd, label, hdrHint }: { item: MediaItem; onAdd: () => void; label: string; hdrHint: string }) {
   const [thumb, setThumb] = useState<string | null>(null);
   const [len, setLen] = useState<string>("");
+  const [hdr, setHdr] = useState(false);
   useEffect(() => {
     if (item.kind !== "audio") thumbnailOf(item.path).then(setThumb).catch(() => {});
     if (item.kind !== "image")
       mediaInfo(item.path)
-        .then((i) => setLen(`${Math.floor(i.duration / 60)}:${String(Math.round(i.duration % 60)).padStart(2, "0")}`))
+        .then((i) => {
+          setLen(`${Math.floor(i.duration / 60)}:${String(Math.round(i.duration % 60)).padStart(2, "0")}`);
+          setHdr(!!i.hdr);
+        })
         .catch(() => {});
   }, [item]);
   return (
@@ -55,6 +59,11 @@ function MediaTile({ item, onAdd, label }: { item: MediaItem; onAdd: () => void;
       <div className="thumb" style={{ backgroundImage: thumb ? `url(${thumb})` : undefined }}>
         {item.kind === "audio" && <span className="note">♪</span>}
         {len && <span className="len">{len}</span>}
+        {hdr && (
+          <span className="hdr" title={hdrHint}>
+            HDR
+          </span>
+        )}
         <button className="add" title={label} onClick={onAdd}>
           +
         </button>

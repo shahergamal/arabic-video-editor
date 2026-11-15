@@ -2,6 +2,8 @@ import { useState } from "react";
 import { api } from "./api";
 import { cutSilences, listingTexts, publishCheck, type Listing } from "./assistant";
 import { useT, type TKey } from "./i18n";
+import type { MediaItem } from "./MediaPanel";
+import { MulticamSection, PluginsSection } from "./Phase4Panels";
 import type { Brand, Clip, Project } from "./types";
 import { allClips, fileName } from "./types";
 
@@ -13,6 +15,8 @@ interface Props {
   families: string[];
   onCommit: (p: Project) => void;
   onJump: (frame: number) => void;
+  media: MediaItem[];
+  frame: number;
 }
 
 const LEVELS = [
@@ -21,7 +25,7 @@ const LEVELS = [
   { key: "quietStrong", db: -26, min: 0.35 },
 ] as const;
 
-export function AssistantPanel({ project, selected, missing, brand, families, onCommit, onJump }: Props) {
+export function AssistantPanel({ project, selected, missing, brand, families, onCommit, onJump, media, frame }: Props) {
   const t = useT();
   const [level, setLevel] = useState(1);
   const [busy, setBusy] = useState(false);
@@ -136,6 +140,9 @@ export function AssistantPanel({ project, selected, missing, brand, families, on
       <button className="primary" onClick={() => onCommit({ ...project, texts: [...project.texts, ...listingTexts(project, listing, font, accent)] })}>
         {t("lstMake")}
       </button>
+
+      <MulticamSection project={project} media={media} frame={frame} onCommit={onCommit} />
+      <PluginsSection />
     </div>
   );
 }

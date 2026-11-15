@@ -1,5 +1,6 @@
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { CutoutSection, MaskSection, applyRamp, rampKind } from "./ProPanels";
+import { label as pluginLabel, usePlugins } from "./plugins";
 import { useT, type TKey } from "./i18n";
 import { movePreset, setTransformAt, speedOf, transformAt, type MovePreset } from "./motion";
 import type { Adjust, Clip, FontInfo, Rgba, TextAnim, TextAnimKind, TextLayer, TransitionKind } from "./types";
@@ -194,6 +195,8 @@ export function ClipProperties(props: {
     const p = await openDialog({ filters: [{ name: "LUT", extensions: ["cube"] }] });
     if (typeof p === "string") setA({ lut: p, lut_strength: adjust.lut_strength ?? 1 });
   };
+  const plugins = usePlugins();
+  const pluginLooks = plugins.flatMap((p) => p.looks.map((l, i) => ({ key: `${p.id}/${i}`, look: l, lut: p.lut_paths[i] ?? null })));
   const extraColour = !!(adjust.shadows || adjust.highlights || adjust.tint || adjust.vignette || adjust.lut);
   return (
     <div className="panel-body">
@@ -278,6 +281,22 @@ export function ClipProperties(props: {
                 </button>
               ))}
             </div>
+            {pluginLooks.length > 0 && (
+              <>
+                <span className="label">{t("fromPlugins")}</span>
+                <div className="chips">
+                  {pluginLooks.map(({ key, look, lut }) => (
+                    <button
+                      key={key}
+                      className={lut && adjust.lut === lut ? "on" : ""}
+                      onClick={() => set({ adjust: { ...NEUTRAL, ...(look.adjust as Partial<Adjust>), lut, lut_strength: 1 } })}
+                    >
+                      {pluginLabel(look)}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
             {(["brightness", "contrast", "saturation", "temperature"] as const).map((k) => (
               <Slider key={k} label={t(k)} min={-1} max={1} step={0.01} value={adjust[k]} onChange={(v) => setA({ [k]: v })} format={signed} />
             ))}

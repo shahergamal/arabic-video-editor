@@ -36,6 +36,8 @@ pub struct MediaInfo {
     pub duration: f64,
     pub fps: Option<Fps>,
     pub has_audio: bool,
+    /// "pq" (HDR10, Dolby Vision base layer) or "hlg" for HDR video.
+    pub hdr: Option<String>,
 }
 
 pub fn probe(path: &Path) -> Result<MediaInfo> {
@@ -55,6 +57,11 @@ pub fn probe(path: &Path) -> Result<MediaInfo> {
         .as_str()
         .and_then(|s| s.parse().ok())
         .unwrap_or(0.0);
+    let hdr = video.and_then(|s| match s["color_transfer"].as_str() {
+        Some("smpte2084") => Some("pq".to_string()),
+        Some("arib-std-b67") => Some("hlg".to_string()),
+        _ => None,
+    });
     let (width, height, fps) = match video {
         Some(s) => {
             let (mut w, mut h) = (s["width"].as_u64().unwrap_or(0) as u32, s["height"].as_u64().unwrap_or(0) as u32);
@@ -71,7 +78,52 @@ pub fn probe(path: &Path) -> Result<MediaInfo> {
         }
         None => (0, 0, None),
     };
-    Ok(MediaInfo { width, height, duration, fps, has_audio })
+    Ok(MediaInfo { width, height, duration, fps, has_audio, hdr })
+}
+
+/// Whether this ffmpeg can tone-map (needs the zimg library).
+fn can_tonemap() -> bool {
+    static CAN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *CAN.get_or_init(|| {
+        command(ffmpeg_path())
+            .args(["-hide_banner", "-filters"])
+            .output()
+            .map(|o| {
+                let t = String::from_utf8_lossy(&o.stdout);
+                t.contains(" zscale ") && t.contains(" tonemap ")
+            })
+            .unwrap_or(false)
+    })
+}
+
+/// Whether a file is HDR, remembered per file so seeking stays quick.
+fn hdr_of(path: &Path) -> Option<String> {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    static SEEN: std::sync::OnceLock<Mutex<HashMap<PathBuf, Option<String>>>> = std::sync::OnceLock::new();
+    let seen = SEEN.get_or_init(Default::default);
+    if let Some(v) = seen.lock().unwrap().get(path) {
+        return v.clone();
+    }
+    let v = probe(path).ok().and_then(|i| i.hdr);
+    seen.lock().unwrap().insert(path.to_path_buf(), v.clone());
+    v
+}
+
+/// Filters that bring an HDR picture into normal (SDR, BT.709) colours, so
+/// it does not look grey and washed out. Highlights roll off smoothly
+/// (Hable curve). Empty for normal video, or when ffmpeg cannot do it.
+pub fn tonemap_filter(path: &Path) -> String {
+    let Some(kind) = hdr_of(path) else { return String::new() };
+    if !can_tonemap() {
+        return String::new();
+    }
+    // HLG is scene-referred; its nominal peak is lower than PQ's.
+    let npl = if kind == "hlg" { 400 } else { 100 };
+    format!(
+        "zscale=t=linear:npl={npl},format=gbrpf32le,zscale=p=bt709,tonemap=hable:desat=0,\
+         zscale=t=bt709:m=bt709:r=tv,format=yuv420p,"
+    )
 }
 
 fn parse_rate(s: &str) -> Option<Fps> {
@@ -100,7 +152,7 @@ impl FrameReader {
         // Fit the picture inside the frame; the rest stays see-through so
         // tracks underneath show (black shows if there is nothing below).
         let retime = if (speed - 1.0).abs() > 1e-4 { format!("setpts=PTS/{speed:.6},") } else { String::new() };
-        let filter = format!("{retime}fps={fps},{}", fit_filter(width, height), fps = fps.as_ffmpeg());
+        let filter = format!("{}{retime}fps={fps},{}", tonemap_filter(path), fit_filter(width, height), fps = fps.as_ffmpeg());
         let mut child = command(ffmpeg_path())
             .args(["-v", "error", "-nostdin"])
             .args(["-ss", &format!("{start_seconds:.6}")])
@@ -178,7 +230,7 @@ pub fn thumbnail(path: &Path, width: u32) -> Result<Vec<u8>> {
     let out = command(ffmpeg_path())
         .args(["-v", "error", "-nostdin", "-ss", &format!("{at:.3}"), "-i"])
         .arg(path)
-        .args(["-frames:v", "1", "-vf", &format!("scale={width}:-2"), "-f", "image2", "-c:v", "mjpeg", "-q:v", "5", "-"])
+        .args(["-frames:v", "1", "-vf", &format!("{}scale={width}:-2", tonemap_filter(path)), "-f", "image2", "-c:v", "mjpeg", "-q:v", "5", "-"])
         .output()
         .map_err(Error::FfmpegMissing)?;
     if !out.status.success() || out.stdout.is_empty() {
@@ -196,18 +248,22 @@ impl Drop for FrameReader {
 
 /// Whether a video is big enough that editing is smoother with a proxy.
 pub fn wants_proxy(info: &MediaInfo) -> bool {
-    info.width.max(info.height) > 1920 || info.width.min(info.height) > 1080
+    // HDR too: tone-mapping every frame is slow, the copy is already converted.
+    info.width.max(info.height) > 1920 || info.width.min(info.height) > 1080 || info.hdr.is_some()
 }
 
 /// Makes a small, quick-to-seek copy of a video for smooth preview: the
 /// short side at 540 pixels, a key frame every 10 frames, no sound. Written
 /// under a temporary name and renamed when complete.
 pub fn make_proxy(src: &Path, out: &Path) -> Result<()> {
+    let tonemap = tonemap_filter(src);
     let tmp = out.with_extension("part.mp4");
     let res = command(ffmpeg_path())
         .args(["-v", "error", "-y", "-nostdin", "-i"])
         .arg(src)
-        .args(["-map", "0:v:0", "-an", "-vf", "scale='if(gt(iw,ih),-2,540)':'if(gt(iw,ih),540,-2)'"])
+        .args(["-map", "0:v:0", "-an", "-vf", &format!("{tonemap}scale='if(gt(iw,ih),-2,540)':'if(gt(iw,ih),540,-2)'")])
+        // An HDR copy is already normal colour; say so, so it is not converted twice.
+        .args(if tonemap.is_empty() { &[][..] } else { &["-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709"][..] })
         .args(["-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-g", "10", "-pix_fmt", "yuv420p"])
         .arg(&tmp)
         .output()

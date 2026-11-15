@@ -15,6 +15,8 @@ import { Preview } from "./Preview";
 import { CaptionsPanel } from "./CaptionsPanel";
 import { AssistantPanel } from "./AssistantPanel";
 import { Scopes } from "./Scopes";
+import { AngleButtons } from "./Phase4Panels";
+import { switchAngle } from "./multicam";
 import { ClipProperties, TextProperties } from "./Properties";
 import { TextPresets } from "./TextPresets";
 import { Timeline } from "./Timeline";
@@ -251,6 +253,9 @@ export function App() {
         setFrame(end);
       } else if (e.code === "Escape") {
         setSelected(null);
+      } else if (!mod && /^Digit[1-9]$/.test(e.code) && project.angles?.length) {
+        // Live multi-camera cutting: the number picks the camera.
+        commit(switchAngle(project, frame, +e.code.slice(5) - 1));
       }
     };
     window.addEventListener("keydown", onKey);
@@ -263,6 +268,12 @@ export function App() {
         <Home
           onNew={(w, h) => start(newProject(t("untitled"), w, h), null)}
           onOpen={openPath}
+          onImport={(p) =>
+            api
+              .importTimeline(p)
+              .then((proj) => start(proj, null))
+              .catch((e) => setNotice(`${t("openFailed")}: ${e}`))
+          }
           onRecover={(p) => start(p, null)}
           onTemplate={(p) => start({ ...p, name: t("untitled") }, null)}
         />
@@ -344,7 +355,7 @@ export function App() {
             </>
           )}
           {tab === "assistant" && (
-            <AssistantPanel project={project} selected={selClip} missing={missing} brand={brand} families={families} onCommit={commit} onJump={setFrame} />
+            <AssistantPanel project={project} selected={selClip} missing={missing} brand={brand} families={families} onCommit={commit} onJump={setFrame} media={media} frame={frame} />
           )}
           {tab === "captions" && <CaptionsPanel project={project} families={families} onAdd={commit} />}
           {tab === "fonts" && (
@@ -384,6 +395,7 @@ export function App() {
             {formatTime(frame, project.fps)} / {formatTime(total, project.fps)}
           </span>
           <div className="spacer" />
+          {!!project.angles?.length && <AngleButtons project={project} frame={frame} onCommit={commit} compact />}
           <button className={showScopes ? "on" : ""} onClick={() => setShowScopes((v) => !v)} title={t("scopes")}>
             {t("scopes")}
           </button>

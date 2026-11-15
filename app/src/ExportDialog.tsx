@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { ExchangeSection } from "./Phase4Panels";
 import { listen } from "@tauri-apps/api/event";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { api, type ExportJob } from "./api";
@@ -100,11 +101,12 @@ export function ExportDialog({ project, onClose, onLoudness }: { project: Projec
             )}
             <label className="check">
               <input type="checkbox" checked={project.loudness != null} onChange={(e) => onLoudness(e.target.checked ? -14 : null)} />
-              {t("loudnessOpt")}
+              {t("loudnessOpt")} <span dir="ltr">(−14 LUFS)</span>
             </label>
             <p className="muted" dir="ltr">
               MP4 · H.264 · AAC · {Math.round(project.fps.num / project.fps.den)} fps
             </p>
+            <ExchangeSection project={project} />
             <div className="modal-actions">
               <button className="primary" onClick={start}>
                 {t("startExport")}

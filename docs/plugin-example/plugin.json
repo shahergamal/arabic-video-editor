@@ -1,0 +1,20 @@
+{
+  "id": "example-looks",
+  "name": "Example looks",
+  "name_ar": "ألوان تجريبية",
+  "version": "1.0",
+  "author": "Arabic Video Editor",
+  "license": "CC0-1.0",
+  "looks": [
+    { "name": "Teal & orange", "name_ar": "أزرق وبرتقالي", "adjust": { "contrast": 0.1 }, "lut": "luts/teal-orange.cube" },
+    { "name": "Sunset", "name_ar": "غروب", "adjust": { "temperature": 0.6, "saturation": 0.2, "vignette": 0.3 } }
+  ],
+  "texts": [
+    {
+      "name": "Price tag",
+      "name_ar": "شارة سعر",
+      "style": { "text": "٢٫٥ مليون", "size": 0.06, "weight": 700, "color": [255, 255, 255, 255], "background": [200, 40, 40, 230], "y": 0.7 }
+    }
+  ],
+  "fonts": []
+}

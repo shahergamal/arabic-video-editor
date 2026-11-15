@@ -2,7 +2,7 @@
 
 Full plan (Arabic): https://claude.ai/artifact/JwQU4TJLXP4Um8ZYtKpH5M
 
-Status: step 0 ✓ (PR #1), phase 1 ✓ (PR #2), phase 2 ✓ (PR #3), phase 3 ✓ (PR #4).
+Status: step 0 ✓ (PR #1), phase 1 ✓ (PR #2), phase 2 ✓ (PR #3), phase 3 ✓ (PR #4), phase 4 ✓ (PR #5).
 
 - **Step 0 – proof:** play video, correct Arabic text over it, export that matches
   the preview. Measured preview speed shown on screen.
@@ -45,3 +45,28 @@ Status: step 0 ✓ (PR #1), phase 1 ✓ (PR #2), phase 2 ✓ (PR #3), phase 3 �
   two-pass-free `loudnorm` at −14 LUFS.
 - Assistant: cut silences (ffmpeg silencedetect), a pre-publish check, and a
   quick property video built from a few facts in the brand font and colour.
+
+## Phase 4 notes
+
+- **HDR:** HDR10/PQ and HLG files are detected from their colour tags. They
+  are tone-mapped to normal (BT.709) colour with zimg + a Hable curve, in the
+  preview, the export and the thumbnails. They also get a normal-colour proxy,
+  because tone-mapping every frame is slow. Export is SDR, which is what social
+  platforms show to most viewers. HDR export would need a 10-bit pipeline,
+  and is left for later.
+- **Multi-camera:** cameras are lined up by their sound. The engine compares
+  loudness onsets with an FFT cross-correlation at 100/s, then refines at
+  1000/s, so the result is within about 1 ms (tested). A low-confidence match
+  is flagged. The cut is one muted video track (`mc`) whose clips switch
+  camera; the sound is one continuous clip from the first camera. Press 1–9,
+  or the camera buttons, to cut at the playhead, live while playing too.
+- **Other editors:**
+  - OpenTimelineIO can be read and written, including gaps, speed and volume.
+  - Final Cut Pro 7 XML can be read and written; this is the format Premiere
+    Pro and DaVinci Resolve import and export.
+  - EDL (CMX 3600) can be written; it holds one picture track and one audio
+    track.
+  - Texts, effects, motion and transitions do not move across, and the app
+    says which of these were left out.
+- **Plugins:** data only (looks, LUTs, text styles, fonts); see
+  [plugins.md](plugins.md).

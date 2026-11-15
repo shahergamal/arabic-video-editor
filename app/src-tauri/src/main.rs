@@ -3,6 +3,7 @@
 
 mod captions;
 mod commands;
+mod phase4;
 mod tools;
 
 use std::path::PathBuf;
@@ -57,6 +58,12 @@ fn main() {
             tools::track_mask,
             tools::scopes,
             tools::silences,
+            phase4::sync_angles,
+            phase4::export_timeline,
+            phase4::import_timeline,
+            phase4::list_plugins,
+            phase4::install_plugin,
+            phase4::remove_plugin,
         ])
         .run(tauri::generate_context!())
         .expect("failed to start the app");

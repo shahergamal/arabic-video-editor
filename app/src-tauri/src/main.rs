@@ -3,6 +3,7 @@
 
 mod captions;
 mod commands;
+mod tools;
 
 use std::path::PathBuf;
 use tauri::Manager;
@@ -50,6 +51,12 @@ fn main() {
             captions::caption_models,
             captions::download_model,
             captions::transcribe,
+            tools::matte_models,
+            tools::download_matte_model,
+            tools::prepare_matte,
+            tools::track_mask,
+            tools::scopes,
+            tools::silences,
         ])
         .run(tauri::generate_context!())
         .expect("failed to start the app");

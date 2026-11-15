@@ -13,13 +13,15 @@ import { toggleLanguage, useT } from "./i18n";
 import { MediaPanel, toItems, type MediaItem } from "./MediaPanel";
 import { Preview } from "./Preview";
 import { CaptionsPanel } from "./CaptionsPanel";
+import { AssistantPanel } from "./AssistantPanel";
+import { Scopes } from "./Scopes";
 import { ClipProperties, TextProperties } from "./Properties";
 import { TextPresets } from "./TextPresets";
 import { Timeline } from "./Timeline";
 import type { FontInfo, Project, TextLayer } from "./types";
 import { AUDIO_EXT, IMAGE_EXT, VIDEO_EXT, allClips, fileName, formatTime, fpsValue, newId, newProject, normalize, projectDuration } from "./types";
 
-type Tab = "media" | "text" | "captions" | "fonts";
+type Tab = "media" | "text" | "captions" | "fonts" | "assistant";
 const MEDIA_EXT = new Set([...VIDEO_EXT, ...IMAGE_EXT, ...AUDIO_EXT]);
 
 export function App() {
@@ -35,6 +37,7 @@ export function App() {
   const [missing, setMissing] = useState<string[]>([]);
   const [tab, setTab] = useState<Tab>("media");
   const [exporting, setExporting] = useState(false);
+  const [showScopes, setShowScopes] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [brand, setBrand] = useBrand();
   const [templateName, setTemplateName] = useState<string | null>(null);
@@ -326,7 +329,7 @@ export function App() {
 
       <aside className="side left">
         <nav className="tabs" role="tablist">
-          {(["media", "text", "captions", "fonts"] as const).map((k) => (
+          {(["media", "text", "captions", "fonts", "assistant"] as const).map((k) => (
             <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>
               {t(k)}
             </button>
@@ -339,6 +342,9 @@ export function App() {
               <TextPresets families={families} brandFont={brand.font} onAdd={addText} />
               <BrandPanel brand={brand} families={families} onChange={setBrand} onAddLogo={addLogo} />
             </>
+          )}
+          {tab === "assistant" && (
+            <AssistantPanel project={project} selected={selClip} missing={missing} brand={brand} families={families} onCommit={commit} onJump={setFrame} />
           )}
           {tab === "captions" && <CaptionsPanel project={project} families={families} onAdd={commit} />}
           {tab === "fonts" && (
@@ -366,6 +372,7 @@ export function App() {
           onFrame={setFrame}
           onStop={() => setPlaying(false)}
         />
+        {showScopes && <Scopes frame={frame} revision={revision} playing={playing} />}
         <div className="transport">
           <button onClick={() => setFrame(0)} title="Home">
             {t("toStart")}
@@ -377,6 +384,9 @@ export function App() {
             {formatTime(frame, project.fps)} / {formatTime(total, project.fps)}
           </span>
           <div className="spacer" />
+          <button className={showScopes ? "on" : ""} onClick={() => setShowScopes((v) => !v)} title={t("scopes")}>
+            {t("scopes")}
+          </button>
           <button onClick={() => commit(splitAt(project, frame, selClip?.id))} title="S">
             {t("split")}
           </button>
@@ -423,7 +433,7 @@ export function App() {
         <Timeline project={project} frame={frame} selected={selected} onSeek={setFrame} onSelect={setSelected} onCommit={commit} />
       </section>
 
-      {exporting && <ExportDialog project={project} onClose={() => setExporting(false)} />}
+      {exporting && <ExportDialog project={project} onClose={() => setExporting(false)} onLoudness={(v) => commit({ ...project, loudness: v })} />}
       {templateName !== null && (
         <div className="modal-back">
           <form

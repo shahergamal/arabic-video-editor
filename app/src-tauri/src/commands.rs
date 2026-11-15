@@ -34,7 +34,9 @@ impl State {
             cancel: Arc::new(AtomicBool::new(false)),
             proxies_seen: Mutex::new(Default::default()),
         };
-        *s.preview.lock().unwrap() = Compositor::with_font_dirs(&s.font_dirs());
+        let mut preview = Compositor::with_font_dirs(&s.font_dirs());
+        preview.mattes = Some(crate::tools::matte_setup(&s.data_dir));
+        *s.preview.lock().unwrap() = preview;
         s
     }
 
@@ -338,10 +340,12 @@ struct JobProgress {
 pub fn start_export(app: AppHandle, state: tauri::State<State>, jobs: Vec<ExportJob>) -> Res<()> {
     let project = state.project.lock().unwrap().clone().ok_or("no project")?;
     let dirs = state.font_dirs();
+    let data_dir = state.data_dir.clone();
     let cancel = state.cancel.clone();
     cancel.store(false, Ordering::Relaxed);
     std::thread::spawn(move || {
         let mut comp = Compositor::with_font_dirs(&dirs);
+        comp.mattes = Some(crate::tools::matte_setup(&data_dir));
         let even = |v: u32| (v / 2 * 2).max(2);
         let count = jobs.len();
         let mut made = vec![];

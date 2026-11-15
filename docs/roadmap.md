@@ -2,7 +2,7 @@
 
 Full plan (Arabic): https://claude.ai/artifact/JwQU4TJLXP4Um8ZYtKpH5M
 
-Status: step 0 ✓ (PR #1), phase 1 ✓ (PR #2), phase 2 ✓ (PR #3).
+Status: step 0 ✓ (PR #1), phase 1 ✓ (PR #2), phase 2 ✓ (PR #3), phase 3 ✓ (PR #4).
 
 - **Step 0 – proof:** play video, correct Arabic text over it, export that matches
   the preview. Measured preview speed shown on screen.
@@ -25,3 +25,23 @@ Status: step 0 ✓ (PR #1), phase 1 ✓ (PR #2), phase 2 ✓ (PR #3).
   material, so preview and export always match.
 - Proxies: videos above 1080p get a 540p copy for the preview only; export
   always reads the originals.
+
+## Phase 3 notes
+
+- Background removal runs U²-Net (Apache-2.0, from the rembg project's
+  releases) through `tract`, a pure-Rust ONNX runtime, so nothing extra has to
+  be installed. Two models: "people" (176 MB) and "objects" (5 MB). They
+  download once when the user presses Download; pictures never leave the
+  computer. Masks are cached on disk per 1/30 s of the source, and "Prepare"
+  works them out ahead of time on several threads so playback stays smooth.
+- Order of picture effects for each clip: colour → LUT → green screen →
+  background removal → mask. Preview and export use the same code.
+- Tracking follows a box with mean-subtracted block matching plus velocity
+  prediction; the result is a mask path the user can clear.
+- Speed ramps keep the same part of the file when switched on or off. Clips
+  with a ramp are silent (their sound would be pitch-warped).
+- Audio: per-clip noise reduction (afftdn) and voice clarity (EQ + gentle
+  compression); music ducking with sidechaincompress; platform loudness with
+  two-pass-free `loudnorm` at −14 LUFS.
+- Assistant: cut silences (ffmpeg silencedetect), a pre-publish check, and a
+  quick property video built from a few facts in the brand font and colour.

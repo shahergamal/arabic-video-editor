@@ -1,3 +1,5 @@
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { CutoutSection, MaskSection, applyRamp, rampKind } from "./ProPanels";
 import { useT, type TKey } from "./i18n";
 import { movePreset, setTransformAt, speedOf, transformAt, type MovePreset } from "./motion";
 import type { Adjust, Clip, FontInfo, Rgba, TextAnim, TextAnimKind, TextLayer, TransitionKind } from "./types";
@@ -16,7 +18,8 @@ export const LOOKS: Record<string, Adjust> = {
   mono: { brightness: 0, contrast: 0.15, saturation: -1, temperature: 0 },
   bright: { brightness: 0.15, contrast: 0.05, saturation: 0.1, temperature: 0 },
 };
-const sameAdjust = (a: Adjust, b: Adjust) => (Object.keys(a) as (keyof Adjust)[]).every((k) => Math.abs(a[k] - b[k]) < 1e-3);
+const BASIC = ["brightness", "contrast", "saturation", "temperature"] as const;
+const sameAdjust = (a: Adjust, b: Adjust) => BASIC.every((k) => Math.abs(a[k] - b[k]) < 1e-3);
 
 function AnimPicker(props: { label: string; value?: TextAnim | null; fps: number; onChange: (a: TextAnim | null) => void }) {
   const t = useT();
@@ -143,6 +146,18 @@ export function TextProperties(props: { layer: TextLayer; fonts: FontInfo[]; swa
   );
 }
 
+function Section(props: { title: string; open?: boolean; badge?: boolean; children: React.ReactNode }) {
+  return (
+    <details className="section" open={props.open}>
+      <summary>
+        {props.title}
+        {props.badge && <span className="dot" />}
+      </summary>
+      <div className="section-body">{props.children}</div>
+    </details>
+  );
+}
+
 export function ClipProperties(props: {
   clip: Clip;
   fps: number;
@@ -161,23 +176,32 @@ export function ClipProperties(props: {
   const setT = (patch: Partial<Clip["transform"]>) => props.onChange(setTransformAt(clip, Math.min(Math.max(frame, clip.start), clip.start + clip.duration - 1), { ...tr, ...patch }));
   const secs = (f: number) => +(f / fps).toFixed(2);
   const pct = (v: number) => `${Math.round(v * 100)}٪`;
+  const signed = (v: number) => (v > 0 ? "+" : "") + Math.round(v * 100);
   const adjust = clip.adjust ?? NEUTRAL;
   const setA = (patch: Partial<Adjust>) => set({ adjust: { ...adjust, ...patch } });
+  const ramped = !!clip.speed_ramp?.length;
   const speed = speedOf(clip);
   const setSpeed = (v: number) => {
     // Keep the same part of the file: faster means shorter on the timeline.
     const duration = Math.max(1, Math.round((clip.duration * speed) / v));
-    set({ speed: v, duration, keyframes: clip.keyframes?.map((k) => ({ ...k, frame: Math.round((k.frame * speed) / v) })) });
+    set({ speed: v, duration, speed_ramp: [], keyframes: clip.keyframes?.map((k) => ({ ...k, frame: Math.round((k.frame * speed) / v) })) });
   };
+  const fx = clip.audio_fx ?? { denoise: false, voice: false };
   const trKind = clip.transition_in?.kind ?? "none";
   const trFrames = clip.transition_in?.frames ?? Math.round(fps * 0.5);
+  const ramp = rampKind(clip);
+  const pickLut = async () => {
+    const p = await openDialog({ filters: [{ name: "LUT", extensions: ["cube"] }] });
+    if (typeof p === "string") setA({ lut: p, lut_strength: adjust.lut_strength ?? 1 });
+  };
+  const extraColour = !!(adjust.shadows || adjust.highlights || adjust.tint || adjust.vignette || adjust.lut);
   return (
     <div className="panel-body">
       <p dir="auto" className="filename">
         {fileName(clip.source)}
       </p>
       {clip.media !== "image" && (
-        <>
+        <Section title={t("secSound")} open badge={fx.denoise || fx.voice}>
           <Slider label={t("volume")} min={0} max={2} step={0.01} value={clip.volume} onChange={(v) => set({ volume: v })} format={pct} />
           <div className="row">
             <label>
@@ -189,52 +213,100 @@ export function ClipProperties(props: {
               <input type="number" min={0} step={0.1} value={secs(clip.fade_out)} onChange={(e) => set({ fade_out: Math.min(clip.duration, Math.max(0, Math.round(+e.target.value * fps))) })} />
             </label>
           </div>
+          <label className="check">
+            <input type="checkbox" checked={fx.denoise} onChange={(e) => set({ audio_fx: { ...fx, denoise: e.target.checked } })} />
+            {t("denoise")}
+          </label>
+          <label className="check">
+            <input type="checkbox" checked={fx.voice} onChange={(e) => set({ audio_fx: { ...fx, voice: e.target.checked } })} />
+            {t("voiceClear")}
+          </label>
+        </Section>
+      )}
+      {clip.media !== "image" && (
+        <Section title={t("secSpeed")} open={ramped} badge={ramped || Math.abs(speed - 1) > 1e-3}>
           <span className="label">{t("speed")}</span>
           <div className="chips">
             {[0.25, 0.5, 1, 1.5, 2, 4].map((v) => (
-              <button key={v} className={Math.abs(speed - v) < 1e-3 ? "on" : ""} onClick={() => setSpeed(v)} dir="ltr">
+              <button key={v} className={!ramped && Math.abs(speed - v) < 1e-3 ? "on" : ""} onClick={() => setSpeed(v)} dir="ltr">
                 {v}×
               </button>
             ))}
           </div>
-        </>
+          {clip.media === "video" && (
+            <>
+              <span className="label">{t("ramp")}</span>
+              <div className="chips">
+                {(["none", "up", "down", "middle"] as const).map((k) => (
+                  <button key={k} className={ramp === k ? "on" : ""} onClick={() => set(applyRamp(clip, k))}>
+                    {t(k === "none" ? "rampNone" : k === "up" ? "rampUp" : k === "down" ? "rampDown" : "rampMiddle")}
+                  </button>
+                ))}
+              </div>
+              {ramped && <p className="hint small">{t("rampHint")}</p>}
+            </>
+          )}
+        </Section>
       )}
       {clip.media !== "audio" && (
         <>
-          <Slider label={t("scale")} min={0.05} max={3} step={0.01} value={tr.scale} onChange={(v) => setT({ scale: v })} format={pct} />
-          <Slider label={t("posX")} min={-1} max={1} step={0.005} value={tr.x} onChange={(v) => setT({ x: v })} format={pct} />
-          <Slider label={t("posY")} min={-1} max={1} step={0.005} value={tr.y} onChange={(v) => setT({ y: v })} format={pct} />
-          <Slider label={t("opacity")} min={0} max={1} step={0.01} value={tr.opacity} onChange={(v) => setT({ opacity: v })} format={pct} />
-          <button onClick={() => set({ transform: IDENTITY, keyframes: [] })}>{t("resetPosition")}</button>
+          <Section title={t("secPicture")} open badge={moving}>
+            <Slider label={t("scale")} min={0.05} max={3} step={0.01} value={tr.scale} onChange={(v) => setT({ scale: v })} format={pct} />
+            <Slider label={t("posX")} min={-1} max={1} step={0.005} value={tr.x} onChange={(v) => setT({ x: v })} format={pct} />
+            <Slider label={t("posY")} min={-1} max={1} step={0.005} value={tr.y} onChange={(v) => setT({ y: v })} format={pct} />
+            <Slider label={t("opacity")} min={0} max={1} step={0.01} value={tr.opacity} onChange={(v) => setT({ opacity: v })} format={pct} />
+            <button onClick={() => set({ transform: IDENTITY, keyframes: [] })}>{t("resetPosition")}</button>
 
-          <span className="label">{t("motion")}</span>
-          <div className="chips">
-            {(["zoomIn", "zoomOut", "panRight", "panLeft"] as MovePreset[]).map((k) => (
-              <button key={k} onClick={() => set({ keyframes: movePreset(clip, k) })}>
-                {t(k)}
-              </button>
-            ))}
-            {moving && (
-              <button onClick={() => set({ transform: tr, keyframes: [] })}>{t("noMotion")}</button>
-            )}
-          </div>
-          {moving && <p className="hint small">{t("motionHint")}</p>}
+            <span className="label">{t("motion")}</span>
+            <div className="chips">
+              {(["zoomIn", "zoomOut", "panRight", "panLeft"] as MovePreset[]).map((k) => (
+                <button key={k} onClick={() => set({ keyframes: movePreset(clip, k) })}>
+                  {t(k)}
+                </button>
+              ))}
+              {moving && <button onClick={() => set({ transform: tr, keyframes: [] })}>{t("noMotion")}</button>}
+            </div>
+            {moving && <p className="hint small">{t("motionHint")}</p>}
+          </Section>
 
-          <span className="label">{t("look")}</span>
-          <div className="chips">
-            {Object.entries(LOOKS).map(([k, v]) => (
-              <button key={k} className={sameAdjust(adjust, v) ? "on" : ""} onClick={() => set({ adjust: v })}>
-                {t(`look_${k}` as TKey)}
-              </button>
+          <Section title={t("secColor")} badge={!sameAdjust(adjust, NEUTRAL) || extraColour}>
+            <span className="label">{t("look")}</span>
+            <div className="chips">
+              {Object.entries(LOOKS).map(([k, v]) => (
+                <button key={k} className={sameAdjust(adjust, v) ? "on" : ""} onClick={() => set({ adjust: { ...adjust, ...v } })}>
+                  {t(`look_${k}` as TKey)}
+                </button>
+              ))}
+            </div>
+            {(["brightness", "contrast", "saturation", "temperature"] as const).map((k) => (
+              <Slider key={k} label={t(k)} min={-1} max={1} step={0.01} value={adjust[k]} onChange={(v) => setA({ [k]: v })} format={signed} />
             ))}
-          </div>
-          {(["brightness", "contrast", "saturation", "temperature"] as const).map((k) => (
-            <Slider key={k} label={t(k)} min={-1} max={1} step={0.01} value={adjust[k]} onChange={(v) => setA({ [k]: v })} format={(v) => (v > 0 ? "+" : "") + Math.round(v * 100)} />
-          ))}
+            {(["shadows", "highlights", "tint"] as const).map((k) => (
+              <Slider key={k} label={t(k)} min={-1} max={1} step={0.01} value={adjust[k] ?? 0} onChange={(v) => setA({ [k]: v })} format={signed} />
+            ))}
+            <Slider label={t("vignette")} min={0} max={1} step={0.01} value={adjust.vignette ?? 0} onChange={(v) => setA({ vignette: v })} format={pct} />
+            <span className="label">{t("lut")}</span>
+            <div className="row">
+              <button onClick={pickLut}>{t("loadLut")}</button>
+              {adjust.lut && (
+                <button title={adjust.lut} onClick={() => setA({ lut: null })}>
+                  ✕ <span dir="auto">{fileName(adjust.lut)}</span>
+                </button>
+              )}
+            </div>
+            {adjust.lut && <Slider label={t("lutStrength")} min={0} max={1} step={0.01} value={adjust.lut_strength ?? 1} onChange={(v) => setA({ lut_strength: v })} format={pct} />}
+          </Section>
+
+          <Section title={t("secCutout")} badge={!!clip.remove_bg || !!clip.chroma}>
+            <CutoutSection clip={clip} onChange={props.onChange} />
+          </Section>
+
+          <Section title={t("secMask")} badge={!!clip.mask}>
+            <MaskSection clip={clip} frame={frame} onChange={props.onChange} />
+          </Section>
 
           {props.hasBefore && (
-            <>
-              <span className="label">{t("transitionIn")}</span>
+            <Section title={t("transitionIn")} badge={trKind !== "none"}>
               <div className="chips">
                 {TRANSITIONS.map((k) => (
                   <button key={k} className={trKind === k ? "on" : ""} onClick={() => set({ transition_in: k === "none" ? null : { kind: k, frames: trFrames } })}>
@@ -245,7 +317,7 @@ export function ClipProperties(props: {
               {trKind !== "none" && (
                 <Slider label={t("animSeconds")} min={0.1} max={2} step={0.1} value={+(trFrames / fps).toFixed(1)} onChange={(v) => set({ transition_in: { kind: trKind as TransitionKind, frames: Math.min(clip.duration, Math.max(1, Math.round(v * fps))) } })} />
               )}
-            </>
+            </Section>
           )}
         </>
       )}

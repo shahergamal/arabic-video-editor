@@ -7,7 +7,7 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-pub const FORMAT_VERSION: u32 = 3;
+pub const FORMAT_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Project {
@@ -22,6 +22,10 @@ pub struct Project {
     pub tracks: Vec<Track>,
     /// Text layers, drawn above all video in list order.
     pub texts: Vec<TextLayer>,
+    /// Make the whole video this loud (LUFS) on export, e.g. -14 for social
+    /// media. `None` leaves the sound as it is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loudness: Option<f32>,
     /// Version 1 files kept clips here; they are moved onto a track on load.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub clips: Vec<Clip>,
@@ -44,6 +48,9 @@ pub struct Track {
     pub hidden: bool,
     #[serde(default)]
     pub locked: bool,
+    /// Background music: goes quieter by itself while others speak.
+    #[serde(default)]
+    pub duck: bool,
     pub clips: Vec<Clip>,
 }
 
@@ -113,11 +120,133 @@ pub struct Clip {
     /// How this clip comes in from the clip before it on the same track.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transition_in: Option<Transition>,
+    /// Cut the subject out of the background with this model ("people" or
+    /// "objects"). Runs on this computer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remove_bg: Option<String>,
+    /// Make one colour see-through (green screen).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chroma: Option<ChromaKey>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mask: Option<Mask>,
+    /// Speed changing smoothly over time; when set it replaces `speed`.
+    /// The clip's own sound is left out while ramping.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub speed_ramp: Vec<SpeedPoint>,
+    #[serde(default, skip_serializing_if = "AudioFx::is_off")]
+    pub audio_fx: AudioFx,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct ChromaKey {
+    pub color: [u8; 3],
+    /// How different a colour may be and still be removed (0 to 1).
+    pub strength: f32,
+    /// Width of the soft edge (0 to 1).
+    pub softness: f32,
+}
+
+/// A shape on the picture: keep only inside it, cut it out, or blur it
+/// (to hide a face or a car plate). Coordinates are shares of the frame.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Mask {
+    /// "rect" or "ellipse".
+    pub shape: String,
+    /// "keep", "cut" or "blur".
+    pub mode: String,
+    /// Centre, 0..1 across and down the frame.
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+    /// Soft edge, as a share of the shape's size.
+    #[serde(default)]
+    pub feather: f32,
+    /// Blur strength for "blur", as a share of the frame width.
+    #[serde(default = "default_blur")]
+    pub blur: f32,
+    /// Where the centre is at given frames (from tracking), counted from the
+    /// clip's start. Between points it moves in a straight line.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub path: Vec<MaskPoint>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct MaskPoint {
+    pub frame: u64,
+    pub x: f32,
+    pub y: f32,
+}
+
+fn default_blur() -> f32 {
+    0.03
+}
+
+impl Mask {
+    /// Centre at `local` frames into the clip.
+    pub fn centre_at(&self, local: u64) -> (f32, f32) {
+        let p = &self.path;
+        if p.is_empty() {
+            return (self.x, self.y);
+        }
+        if local <= p[0].frame {
+            return (p[0].x, p[0].y);
+        }
+        for w in p.windows(2) {
+            if local <= w[1].frame {
+                let t = (local - w[0].frame) as f32 / (w[1].frame - w[0].frame).max(1) as f32;
+                return (w[0].x + (w[1].x - w[0].x) * t, w[0].y + (w[1].y - w[0].y) * t);
+            }
+        }
+        let l = p[p.len() - 1];
+        (l.x, l.y)
+    }
+}
+
+/// Speed at a frame (counted from the clip's start).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct SpeedPoint {
+    pub frame: u64,
+    pub speed: f32,
+}
+
+/// Clean-up for the clip's sound.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
+pub struct AudioFx {
+    /// Reduce steady background noise (fans, hum, street).
+    #[serde(default)]
+    pub denoise: bool,
+    /// Make speech clearer and more even.
+    #[serde(default)]
+    pub voice: bool,
+}
+
+impl AudioFx {
+    pub fn is_off(&self) -> bool {
+        !self.denoise && !self.voice
+    }
 }
 
 /// Colour adjustments. Every value runs from -1 to 1; 0 changes nothing.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Adjust {
+    /// Lift or lower the dark parts only.
+    #[serde(default)]
+    pub shadows: f32,
+    /// Lift or lower the bright parts only.
+    #[serde(default)]
+    pub highlights: f32,
+    /// Below 0 greener, above 0 more magenta.
+    #[serde(default)]
+    pub tint: f32,
+    /// Darken (above 0) or lighten (below 0) the corners.
+    #[serde(default)]
+    pub vignette: f32,
+    /// A colour look file (.cube) and how strongly to use it (0 to 1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lut: Option<PathBuf>,
+    #[serde(default = "one")]
+    pub lut_strength: f32,
     #[serde(default)]
     pub brightness: f32,
     #[serde(default)]
@@ -129,9 +258,28 @@ pub struct Adjust {
     pub temperature: f32,
 }
 
+impl Default for Adjust {
+    fn default() -> Self {
+        Self {
+            shadows: 0.0,
+            highlights: 0.0,
+            tint: 0.0,
+            vignette: 0.0,
+            lut: None,
+            lut_strength: 1.0,
+            brightness: 0.0,
+            contrast: 0.0,
+            saturation: 0.0,
+            temperature: 0.0,
+        }
+    }
+}
+
 impl Adjust {
     pub fn is_neutral(&self) -> bool {
-        *self == Self::default()
+        let z = |v: f32| v == 0.0;
+        z(self.brightness) && z(self.contrast) && z(self.saturation) && z(self.temperature)
+            && z(self.shadows) && z(self.highlights) && z(self.tint) && z(self.vignette) && self.lut.is_none()
     }
 }
 
@@ -173,12 +321,45 @@ impl Clip {
             adjust: Adjust::default(),
             keyframes: vec![],
             transition_in: None,
+            remove_bg: None,
+            chroma: None,
+            mask: None,
+            speed_ramp: vec![],
+            audio_fx: AudioFx::default(),
         }
+    }
+
+    /// Speed at `local` frames into the clip.
+    pub fn speed_at(&self, local: u64) -> f32 {
+        let r = &self.speed_ramp;
+        if r.is_empty() {
+            return self.speed;
+        }
+        if local <= r[0].frame {
+            return r[0].speed;
+        }
+        for w in r.windows(2) {
+            if local <= w[1].frame {
+                let t = (local - w[0].frame) as f32 / (w[1].frame - w[0].frame).max(1) as f32;
+                return w[0].speed + (w[1].speed - w[0].speed) * t;
+            }
+        }
+        r[r.len() - 1].speed
     }
 
     /// Seconds into the source file shown at timeline frame `frame`.
     pub fn source_time(&self, frame: u64, fps: crate::time::Fps) -> f64 {
-        self.source_in + fps.frame_to_seconds(frame.saturating_sub(self.start)) * self.speed.max(0.01) as f64
+        let local = frame.saturating_sub(self.start);
+        if self.speed_ramp.is_empty() {
+            return self.source_in + fps.frame_to_seconds(local) * self.speed.max(0.01) as f64;
+        }
+        // Add up the time each frame covers (average speed over each frame).
+        let per = fps.frame_to_seconds(1);
+        let mut t = self.source_in;
+        for k in 0..local {
+            t += per * ((self.speed_at(k) + self.speed_at(k + 1)) as f64 / 2.0).max(0.01);
+        }
+        t
     }
 
     /// Position, size and opacity at timeline frame `frame`, following the
@@ -291,10 +472,11 @@ impl Project {
             height,
             fps,
             tracks: vec![
-                Track { id: "v1".into(), kind: TrackKind::Video, muted: false, hidden: false, locked: false, clips: vec![] },
-                Track { id: "a1".into(), kind: TrackKind::Audio, muted: false, hidden: false, locked: false, clips: vec![] },
+                Track { id: "v1".into(), kind: TrackKind::Video, muted: false, hidden: false, locked: false, duck: false, clips: vec![] },
+                Track { id: "a1".into(), kind: TrackKind::Audio, muted: false, hidden: false, locked: false, duck: false, clips: vec![] },
             ],
             texts: vec![],
+            loudness: None,
             clips: vec![],
         }
     }
@@ -307,7 +489,7 @@ impl Project {
                 Some(t) => t.clips.extend(clips),
                 None => self.tracks.insert(
                     0,
-                    Track { id: "v1".into(), kind: TrackKind::Video, muted: false, hidden: false, locked: false, clips },
+                    Track { id: "v1".into(), kind: TrackKind::Video, muted: false, hidden: false, locked: false, duck: false, clips },
                 ),
             }
         }
@@ -358,9 +540,19 @@ impl Project {
         out
     }
 
+    /// Whether a clip sits on a music track that ducks under speech.
+    pub fn is_ducked(&self, clip_id: &str) -> bool {
+        self.tracks.iter().any(|t| t.duck && t.clips.iter().any(|c| c.id == clip_id))
+    }
+
     /// Every clip whose sound is heard in the export.
     pub fn audible_clips(&self) -> Vec<&Clip> {
-        self.tracks.iter().filter(|t| !t.muted).flat_map(|t| t.clips.iter()).filter(|c| c.media != MediaKind::Image).collect()
+        self.tracks
+            .iter()
+            .filter(|t| !t.muted)
+            .flat_map(|t| t.clips.iter())
+            .filter(|c| c.media != MediaKind::Image && c.speed_ramp.is_empty())
+            .collect()
     }
 
     pub fn load(path: &Path) -> crate::Result<Self> {
@@ -412,7 +604,7 @@ impl Project {
             Some(i) => i,
             None => {
                 let id = format!("{}{}", if kind == TrackKind::Video { "v" } else { "a" }, self.tracks.len() + 1);
-                self.tracks.push(Track { id, kind, muted: false, hidden: false, locked: false, clips: vec![] });
+                self.tracks.push(Track { id, kind, muted: false, hidden: false, locked: false, duck: false, clips: vec![] });
                 self.tracks.len() - 1
             }
         };

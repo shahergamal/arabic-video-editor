@@ -23,21 +23,27 @@ fn every_bundled_font_is_loaded() {
     }
 }
 
+/// Glyph ids for the letter starting at byte `start` (some fonts draw a
+/// letter as several pieces, e.g. its body and its dots).
+fn letter(glyphs: &[engine::text::ShapedGlyph], start: usize) -> Vec<u16> {
+    let mut ids: Vec<u16> = glyphs.iter().filter(|g| g.start == start).map(|g| g.glyph_id).collect();
+    ids.sort();
+    ids
+}
+
 #[test]
 fn letters_join_into_initial_medial_final_forms() {
     let mut r = renderer();
     for family in bundled_families() {
-        let isolated = r.shape("ب", &family, 48.0)[0].glyph_id;
+        let isolated = letter(&r.shape("ب", &family, 48.0), 0);
         let joined = r.shape("ببب", &family, 48.0);
-        assert_eq!(joined.len(), 3, "{family}");
-        // Sort glyphs back into reading order (by where they came from in the text).
-        let mut by_text = joined.clone();
-        by_text.sort_by_key(|g| g.start);
-        let (first, middle, last) = (by_text[0].glyph_id, by_text[1].glyph_id, by_text[2].glyph_id);
+        let ba = "ب".len();
+        let (first, middle, last) = (letter(&joined, 0), letter(&joined, ba), letter(&joined, 2 * ba));
+        assert!(!first.is_empty() && !middle.is_empty() && !last.is_empty(), "{family}");
         assert_ne!(first, isolated, "{family}: first letter not in initial form");
         assert_ne!(last, isolated, "{family}: last letter not in final form");
-        assert_ne!(first, last, "{family}: initial and final forms are the same glyph");
-        assert_ne!(middle, first, "{family}: medial form missing");
+        assert_ne!(first, last, "{family}: initial and final forms are the same");
+        assert_ne!(middle, isolated, "{family}: medial form missing");
     }
 }
 
@@ -59,14 +65,16 @@ fn lam_alef_is_joined_not_two_separate_letters() {
     // pieces. Either way, neither piece may be the stand-alone ل or ا.
     let mut r = renderer();
     for family in bundled_families() {
-        let lam = r.shape("ل", &family, 48.0)[0].glyph_id;
-        let alef = r.shape("ا", &family, 48.0)[0].glyph_id;
+        let lam = letter(&r.shape("ل", &family, 48.0), 0);
+        let alef = letter(&r.shape("ا", &family, 48.0), 0);
         let glyphs = r.shape("لا", &family, 48.0);
-        assert!(!glyphs.is_empty() && glyphs.len() <= 2, "{family}");
-        assert!(
-            glyphs.iter().all(|g| g.glyph_id != lam && g.glyph_id != alef),
-            "{family}: لا was drawn as two separate letters"
-        );
+        assert!(!glyphs.is_empty(), "{family}");
+        let joined_lam = letter(&glyphs, 0);
+        let joined_alef = letter(&glyphs, "ل".len());
+        // Either one ligature for both letters (alef part empty), or two pieces
+        // that are not the stand-alone letters.
+        assert_ne!(joined_lam, lam, "{family}: ل in لا is the stand-alone letter");
+        assert!(joined_alef.is_empty() || joined_alef != alef, "{family}: ا in لا is the stand-alone letter");
     }
 }
 

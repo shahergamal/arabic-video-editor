@@ -80,5 +80,5 @@ if (-not $setup) { throw "the installer was not found after the build" }
 
 Step "Installing $($setup.Name)"
 Start-Process $setup.FullName -ArgumentList "/S" -Wait
-Copy-Item $setup.FullName "$env:USERPROFILE\Desktop\" -Force
+Copy-Item $setup.FullName ([Environment]::GetFolderPath("Desktop")) -Force
 Write-Host "`nDone. Open the editor from the Start menu. A copy of the installer is on the Desktop." -ForegroundColor Green

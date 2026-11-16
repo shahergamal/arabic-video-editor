@@ -8,12 +8,13 @@ import { FORMATS, allClips, fileName } from "./types";
 interface Props {
   onNew: (width: number, height: number) => void;
   onOpen: (path: string) => void;
+  onImport: (path: string) => void;
   onRecover: (p: Project) => void;
   onTemplate: (p: Project) => void;
 }
 
 /** First screen: start something new, reopen recent work, or recover. */
-export function Home({ onNew, onOpen, onRecover, onTemplate }: Props) {
+export function Home({ onNew, onOpen, onImport, onRecover, onTemplate }: Props) {
   const t = useT();
   const [recent, setRecent] = useState<Recent[]>([]);
   const [recovered, setRecovered] = useState<Project | null>(null);
@@ -31,6 +32,10 @@ export function Home({ onNew, onOpen, onRecover, onTemplate }: Props) {
   const pick = async () => {
     const path = await openDialog({ filters: [{ name: "AVE", extensions: ["ave"] }] });
     if (typeof path === "string") onOpen(path);
+  };
+  const pickTimeline = async () => {
+    const path = await openDialog({ filters: [{ name: "Timeline", extensions: ["xml", "otio"] }] });
+    if (typeof path === "string") onImport(path);
   };
 
   return (
@@ -104,7 +109,10 @@ export function Home({ onNew, onOpen, onRecover, onTemplate }: Props) {
       <section>
         <div className="section-head">
           <h2>{t("recent")}</h2>
-          <button onClick={pick}>{t("openProject")}</button>
+          <div className="row">
+            <button onClick={pickTimeline}>{t("importTimeline")}</button>
+            <button onClick={pick}>{t("openProject")}</button>
+          </div>
         </div>
         {recent.length === 0 && <p className="muted">{t("noRecent")}</p>}
         <ul className="recent">

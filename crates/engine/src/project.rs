@@ -7,7 +7,7 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-pub const FORMAT_VERSION: u32 = 4;
+pub const FORMAT_VERSION: u32 = 5;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Project {
@@ -26,9 +26,27 @@ pub struct Project {
     /// media. `None` leaves the sound as it is.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub loudness: Option<f32>,
+    /// Cameras of a multi-camera shoot, lined up by sound (see `multicam`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub angles: Vec<Angle>,
     /// Version 1 files kept clips here; they are moved onto a track on load.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub clips: Vec<Clip>,
+}
+
+/// One camera of a multi-camera shoot. `offset` is where this file's start
+/// falls on the first camera's clock, in seconds (negative: it started
+/// earlier). The same moment is at `t - offset` in this file when it is at
+/// `t` in the first.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Angle {
+    pub source: PathBuf,
+    pub offset: f64,
+    /// Length of the file in seconds.
+    #[serde(default)]
+    pub duration: f64,
+    #[serde(default)]
+    pub name: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -477,6 +495,7 @@ impl Project {
             ],
             texts: vec![],
             loudness: None,
+            angles: vec![],
             clips: vec![],
         }
     }

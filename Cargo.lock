@@ -64,6 +64,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
+ "tempfile",
  "ureq",
  "whisper-rs",
 ]
@@ -954,6 +955,8 @@ version = "0.1.0"
 dependencies = [
  "cosmic-text",
  "png 0.17.16",
+ "roxmltree",
+ "rustfft",
  "serde",
  "serde_json",
  "tempfile",

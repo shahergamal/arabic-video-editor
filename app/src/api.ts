@@ -46,6 +46,12 @@ export const api = {
   scopes: (index: number) => invoke<ArrayBuffer>("scopes", { index }),
   silences: (path: string, threshold: number, minSeconds: number) =>
     invoke<[number, number][]>("silences", { path, threshold, minSeconds }),
+  syncAngles: (paths: string[]) => invoke<{ source: string; offset: number; confidence: number }[]>("sync_angles", { paths }),
+  exportTimeline: (path: string, format: "otio" | "xml" | "edl") => invoke<string[]>("export_timeline", { path, format }),
+  importTimeline: (path: string) => invoke<Project>("import_timeline", { path }),
+  plugins: () => invoke<Plugin[]>("list_plugins"),
+  installPlugin: (folder: string) => invoke<string>("install_plugin", { folder }),
+  removePlugin: (id: string) => invoke<void>("remove_plugin", { id }),
   brand: () => invoke<Brand | null>("get_brand"),
   setBrand: (brand: Brand) => invoke<void>("set_brand", { brand }),
   cancelExport: () => invoke<void>("cancel_export"),
@@ -75,3 +81,27 @@ export const thumbnailOf = (path: string) => {
     );
   return thumbs.get(path)!;
 };
+
+export interface PluginLook {
+  name: string;
+  name_ar?: string | null;
+  adjust: Partial<Record<string, number>>;
+  lut?: string | null;
+}
+export interface PluginText {
+  name: string;
+  name_ar?: string | null;
+  style: Record<string, unknown>;
+}
+export interface Plugin {
+  id: string;
+  name: string;
+  name_ar?: string | null;
+  version: string;
+  author: string;
+  license: string;
+  looks: PluginLook[];
+  texts: PluginText[];
+  fonts: string[];
+  lut_paths: (string | null)[];
+}

@@ -1,4 +1,5 @@
 import { useT, type TKey } from "./i18n";
+import { label, usePlugins } from "./plugins";
 import type { TextLayer } from "./types";
 
 type Preset = Omit<TextLayer, "id" | "start" | "duration" | "font_family"> & { key: TKey; fontPref: string[] };
@@ -13,6 +14,10 @@ export const PRESETS: Preset[] = [
 
 export function TextPresets({ families, brandFont, onAdd }: { families: string[]; brandFont?: string | null; onAdd: (t: Omit<TextLayer, "id" | "start" | "duration">) => void }) {
   const t = useT();
+  const plugins = usePlugins();
+  const styles = plugins.flatMap((p) => p.texts.map((x, i) => ({ key: `${p.id}/${i}`, x })));
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { key: _k, fontPref: _f, ...base } = PRESETS[0];
   return (
     <div className="panel-body presets">
       {PRESETS.map(({ key, fontPref, ...p }) => {
@@ -34,6 +39,20 @@ export function TextPresets({ families, brandFont, onAdd }: { families: string[]
               {p.text}
             </span>
             <span className="muted">{t(key)}</span>
+          </button>
+        );
+      })}
+      {styles.length > 0 && <span className="label">{t("fromPlugins")}</span>}
+      {styles.map(({ key, x }) => {
+        const style = { ...base, ...(x.style as Partial<TextLayer>) };
+        const wanted = typeof style.font_family === "string" ? style.font_family : "";
+        const font_family = [wanted, brandFont ?? "", "Cairo"].find((f) => f && families.includes(f)) ?? families[0] ?? "Cairo";
+        return (
+          <button key={key} className="preset" onClick={() => onAdd({ ...style, font_family })}>
+            <span className="preset-sample" style={{ fontFamily: `"${font_family}"`, color: `rgb(${style.color.slice(0, 3).join(",")})`, fontWeight: style.weight }} dir="auto">
+              {style.text}
+            </span>
+            <span className="muted">{label(x)}</span>
           </button>
         );
       })}

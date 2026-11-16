@@ -146,6 +146,16 @@ export interface Project {
   tracks: Track[];
   texts: TextLayer[];
   loudness?: number | null;
+  angles?: Angle[];
+}
+
+/** One camera of a multi-camera shoot; see the engine's `Angle`. */
+export interface Angle {
+  source: string;
+  /** Where this file starts on the first camera's clock, in seconds. */
+  offset: number;
+  duration: number;
+  name: string;
 }
 
 export interface MediaInfo {
@@ -154,6 +164,7 @@ export interface MediaInfo {
   duration: number;
   fps: Fps | null;
   has_audio: boolean;
+  hdr?: "pq" | "hlg" | null;
 }
 
 export interface FontInfo {
@@ -193,7 +204,7 @@ export const FORMATS = [
 
 export function newProject(name: string, width: number, height: number): Project {
   return {
-    version: 4,
+    version: 5,
     name,
     width,
     height,

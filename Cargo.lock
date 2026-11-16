@@ -58,14 +58,17 @@ name = "arabic-video-editor"
 version = "0.1.0"
 dependencies = [
  "engine",
+ "getrandom 0.2.17",
  "jpeg-encoder",
  "serde",
  "serde_json",
+ "sha2",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
  "tempfile",
  "ureq",
+ "url",
  "whisper-rs",
  "zip",
 ]

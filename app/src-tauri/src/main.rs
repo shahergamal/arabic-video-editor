@@ -5,6 +5,7 @@ mod captions;
 mod commands;
 mod phase4;
 mod phase5;
+mod publish;
 mod tools;
 
 use std::path::PathBuf;
@@ -79,6 +80,13 @@ fn main() {
             phase5::estimate_plan,
             phase5::make_edit,
             phase5::download_local_ai,
+            publish::social_status,
+            publish::social_set_apps,
+            publish::social_connect,
+            publish::social_disconnect,
+            publish::tiktok_privacy_options,
+            publish::publish,
+            publish::open_platform,
         ])
         .run(tauri::generate_context!())
         .expect("failed to start the app");

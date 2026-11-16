@@ -7,7 +7,7 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-pub const FORMAT_VERSION: u32 = 5;
+pub const FORMAT_VERSION: u32 = 6;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Project {
@@ -29,6 +29,15 @@ pub struct Project {
     /// Cameras of a multi-camera shoot, lined up by sound (see `multicam`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub angles: Vec<Angle>,
+    /// Named points on the timeline, to find places again.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub markers: Vec<Marker>,
+    /// Shapes and arrows, drawn above the video and below the texts.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shapes: Vec<Shape>,
+    /// Groups of clips used as one clip (see `MediaKind::Compound`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub compounds: Vec<Compound>,
     /// Version 1 files kept clips here; they are moved onto a track on load.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub clips: Vec<Clip>,
@@ -47,6 +56,68 @@ pub struct Angle {
     pub duration: f64,
     #[serde(default)]
     pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Marker {
+    pub frame: u64,
+    #[serde(default)]
+    pub label: String,
+    /// A CSS colour, e.g. "#f5a524".
+    #[serde(default)]
+    pub color: String,
+}
+
+/// A shape on top of the video. Sizes are shares of the frame: `w` of its
+/// width, `h` of its height. Lines and arrows run across `w` through the
+/// centre, turned by `rotation`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Shape {
+    pub id: String,
+    /// "rect", "ellipse", "line", "arrow" or "star".
+    pub kind: String,
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+    /// Degrees, clockwise.
+    #[serde(default)]
+    pub rotation: f32,
+    /// Inside colour (alpha 0 = empty).
+    pub fill: [u8; 4],
+    /// Edge colour; lines and arrows are drawn in this colour.
+    pub stroke: [u8; 4],
+    /// Edge thickness as a share of the frame height.
+    #[serde(default)]
+    pub stroke_width: f32,
+    /// Rounded corners for "rect", as a share of the shorter side (0 to 0.5).
+    #[serde(default)]
+    pub radius: f32,
+    #[serde(default)]
+    pub shadow: bool,
+    pub start: u64,
+    pub duration: u64,
+    /// Same kinds as texts, plus "draw" (lines and arrows grow).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anim_in: Option<TextAnim>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anim_out: Option<TextAnim>,
+}
+
+/// Clips grouped into one. A compound clip shows this group's tracks,
+/// starting `source_in` seconds into the group.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Compound {
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    pub tracks: Vec<Track>,
+}
+
+impl Compound {
+    pub fn duration(&self) -> u64 {
+        self.tracks.iter().flat_map(|t| t.clips.iter().map(Clip::end)).max().unwrap_or(0)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -79,6 +150,8 @@ pub enum MediaKind {
     Video,
     Image,
     Audio,
+    /// A group of clips (`source` holds the group's id).
+    Compound,
 }
 
 /// Where a picture sits in the frame. The default fills the frame the way
@@ -91,11 +164,14 @@ pub struct Transform {
     pub x: f32,
     pub y: f32,
     pub opacity: f32,
+    /// Degrees, clockwise.
+    #[serde(default)]
+    pub rotation: f32,
 }
 
 impl Default for Transform {
     fn default() -> Self {
-        Self { scale: 1.0, x: 0.0, y: 0.0, opacity: 1.0 }
+        Self { scale: 1.0, x: 0.0, y: 0.0, opacity: 1.0, rotation: 0.0 }
     }
 }
 
@@ -153,6 +229,53 @@ pub struct Clip {
     pub speed_ramp: Vec<SpeedPoint>,
     #[serde(default, skip_serializing_if = "AudioFx::is_off")]
     pub audio_fx: AudioFx,
+    /// Play backwards. `source_in` then counts from the end of the file
+    /// (it is a position in the reversed file), so trimming and splitting
+    /// work the same way as for normal clips.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub reverse: bool,
+    /// Show one picture (at `source_in`) all the way through, silent.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub freeze: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub flip_h: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub flip_v: bool,
+    #[serde(default, skip_serializing_if = "Crop::is_none")]
+    pub crop: Crop,
+    /// How the picture mixes with what is under it: "normal", "multiply",
+    /// "screen", "overlay", "add", "darken" or "lighten".
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub blend: String,
+    /// Steady a shaky video, 0 (off) to 1 (strongest).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub stabilize: f32,
+}
+
+fn is_false(v: &bool) -> bool {
+    !*v
+}
+fn is_zero(v: &f32) -> bool {
+    *v == 0.0
+}
+
+/// Hides the edges of the picture, as shares of its width and height.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
+pub struct Crop {
+    #[serde(default)]
+    pub left: f32,
+    #[serde(default)]
+    pub top: f32,
+    #[serde(default)]
+    pub right: f32,
+    #[serde(default)]
+    pub bottom: f32,
+}
+
+impl Crop {
+    pub fn is_none(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -274,6 +397,42 @@ pub struct Adjust {
     /// Below 0 is cooler (bluer), above 0 warmer (more orange).
     #[serde(default)]
     pub temperature: f32,
+    /// Colour wheels: a push towards a colour for the dark parts (lift),
+    /// the middle (gamma) and the bright parts (gain), per red, green, blue,
+    /// each -1 to 1.
+    #[serde(default, skip_serializing_if = "zero3")]
+    pub lift: [f32; 3],
+    #[serde(default, skip_serializing_if = "zero3")]
+    pub gamma: [f32; 3],
+    #[serde(default, skip_serializing_if = "zero3")]
+    pub gain: [f32; 3],
+    #[serde(default, skip_serializing_if = "Curves::is_flat")]
+    pub curves: Curves,
+}
+
+fn zero3(v: &[f32; 3]) -> bool {
+    v.iter().all(|x| *x == 0.0)
+}
+
+/// Tone curves as points (input, output), both 0 to 1. An empty list
+/// changes nothing. `master` applies to all three colours.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct Curves {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub master: Vec<[f32; 2]>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub r: Vec<[f32; 2]>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub g: Vec<[f32; 2]>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub b: Vec<[f32; 2]>,
+}
+
+impl Curves {
+    pub fn is_flat(&self) -> bool {
+        let flat = |c: &Vec<[f32; 2]>| c.iter().all(|p| (p[0] - p[1]).abs() < 1e-4);
+        flat(&self.master) && flat(&self.r) && flat(&self.g) && flat(&self.b)
+    }
 }
 
 impl Default for Adjust {
@@ -289,6 +448,10 @@ impl Default for Adjust {
             contrast: 0.0,
             saturation: 0.0,
             temperature: 0.0,
+            lift: [0.0; 3],
+            gamma: [0.0; 3],
+            gain: [0.0; 3],
+            curves: Curves::default(),
         }
     }
 }
@@ -298,6 +461,7 @@ impl Adjust {
         let z = |v: f32| v == 0.0;
         z(self.brightness) && z(self.contrast) && z(self.saturation) && z(self.temperature)
             && z(self.shadows) && z(self.highlights) && z(self.tint) && z(self.vignette) && self.lut.is_none()
+            && zero3(&self.lift) && zero3(&self.gamma) && zero3(&self.gain) && self.curves.is_flat()
     }
 }
 
@@ -344,6 +508,13 @@ impl Clip {
             mask: None,
             speed_ramp: vec![],
             audio_fx: AudioFx::default(),
+            reverse: false,
+            freeze: false,
+            flip_h: false,
+            flip_v: false,
+            crop: Crop::default(),
+            blend: String::new(),
+            stabilize: 0.0,
         }
     }
 
@@ -368,6 +539,9 @@ impl Clip {
     /// Seconds into the source file shown at timeline frame `frame`.
     pub fn source_time(&self, frame: u64, fps: crate::time::Fps) -> f64 {
         let local = frame.saturating_sub(self.start);
+        if self.freeze {
+            return self.source_in;
+        }
         if self.speed_ramp.is_empty() {
             return self.source_in + fps.frame_to_seconds(local) * self.speed.max(0.01) as f64;
         }
@@ -407,6 +581,7 @@ impl Clip {
             x: mix(a.transform.x, b.transform.x),
             y: mix(a.transform.y, b.transform.y),
             opacity: mix(a.transform.opacity, b.transform.opacity),
+            rotation: mix(a.transform.rotation, b.transform.rotation),
         }
     }
 
@@ -418,6 +593,10 @@ impl Clip {
     }
     pub fn has_picture(&self) -> bool {
         self.media != MediaKind::Audio
+    }
+    /// A clip that reads a media file (not a group).
+    pub fn is_file(&self) -> bool {
+        self.media != MediaKind::Compound
     }
 }
 
@@ -496,6 +675,9 @@ impl Project {
             texts: vec![],
             loudness: None,
             angles: vec![],
+            markers: vec![],
+            shapes: vec![],
+            compounds: vec![],
             clips: vec![],
         }
     }
@@ -527,7 +709,8 @@ impl Project {
     pub fn duration(&self) -> u64 {
         let clips = self.all_clips().map(|(_, c)| c.end()).chain(self.clips.iter().map(Clip::end));
         let texts = self.texts.iter().map(|t| t.start + t.duration);
-        clips.chain(texts).max().unwrap_or(0)
+        let shapes = self.shapes.iter().map(|s| s.start + s.duration);
+        clips.chain(texts).chain(shapes).max().unwrap_or(0)
     }
 
     /// The picture clips showing at `frame`, bottom to top.
@@ -561,17 +744,146 @@ impl Project {
 
     /// Whether a clip sits on a music track that ducks under speech.
     pub fn is_ducked(&self, clip_id: &str) -> bool {
-        self.tracks.iter().any(|t| t.duck && t.clips.iter().any(|c| c.id == clip_id))
+        // Clips taken out of a group are named "<group clip>/<clip>".
+        let top = clip_id.split('/').next().unwrap_or(clip_id);
+        self.tracks.iter().any(|t| t.duck && t.clips.iter().any(|c| c.id == top))
     }
 
-    /// Every clip whose sound is heard in the export.
-    pub fn audible_clips(&self) -> Vec<&Clip> {
-        self.tracks
-            .iter()
-            .filter(|t| !t.muted)
-            .flat_map(|t| t.clips.iter())
-            .filter(|c| c.media != MediaKind::Image && c.speed_ramp.is_empty())
-            .collect()
+    pub fn compound(&self, id: &Path) -> Option<&Compound> {
+        self.compounds.iter().find(|c| Path::new(&c.id) == id)
+    }
+
+    /// Every clip whose sound is heard in the export. Grouped clips are
+    /// taken out of their group and placed where they are heard.
+    pub fn audible_clips(&self) -> Vec<Clip> {
+        let mut out = vec![];
+        for c in self.tracks.iter().filter(|t| !t.muted).flat_map(|t| t.clips.iter()) {
+            self.collect_audible(c, &mut out, 0);
+        }
+        out
+    }
+
+    fn collect_audible(&self, c: &Clip, out: &mut Vec<Clip>, depth: u32) {
+        let heard = |c: &Clip| c.media != MediaKind::Image && c.speed_ramp.is_empty() && !c.freeze && c.volume > 0.0;
+        if c.media != MediaKind::Compound {
+            if heard(c) {
+                out.push(c.clone());
+            }
+            return;
+        }
+        for (_, _, muted, n) in self.expand(c, depth) {
+            if !muted {
+                self.collect_audible(&n, out, depth + 1);
+            }
+        }
+    }
+
+    /// The clips inside a group clip, cut to the part it shows and placed
+    /// where they play on the timeline: (track kind, track number in the
+    /// group, track muted, clip). Inner groups are left as groups.
+    pub fn expand(&self, c: &Clip, depth: u32) -> Vec<(TrackKind, usize, bool, Clip)> {
+        let mut out = vec![];
+        let Some(group) = self.compound(&c.source) else { return out };
+        if depth > 8 {
+            return out;
+        }
+        let offset = (c.source_in * self.fps.as_f64()).round().max(0.0) as u64;
+        let (from, to) = (offset, offset + c.duration);
+        for (ti, track) in group.tracks.iter().enumerate() {
+            for inner in &track.clips {
+                let (s, e) = (inner.start.max(from), inner.end().min(to));
+                if s >= e {
+                    continue;
+                }
+                let cut = s - inner.start;
+                let mut n = inner.clone();
+                n.id = format!("{}/{}", c.id, inner.id);
+                n.start = c.start + (s - from);
+                n.duration = e - s;
+                let rate = if inner.media == MediaKind::Compound || inner.freeze { 1.0 } else { inner.speed.max(0.01) as f64 };
+                if !inner.freeze {
+                    n.source_in += self.fps.frame_to_seconds(cut) * rate;
+                }
+                n.volume *= c.volume;
+                if cut > 0 {
+                    n.fade_in = 0;
+                    n.transition_in = None;
+                }
+                if e < inner.end() {
+                    n.fade_out = 0;
+                }
+                if !n.keyframes.is_empty() {
+                    let at = inner.transform_at(s);
+                    n.keyframes.retain(|k| k.frame > cut);
+                    for k in &mut n.keyframes {
+                        k.frame -= cut;
+                    }
+                    n.keyframes.insert(0, Keyframe { frame: 0, transform: at });
+                }
+                out.push((track.kind, ti, track.muted, n));
+            }
+        }
+        out
+    }
+
+    /// The same edit with every group clip replaced by the clips inside it
+    /// (for other editors, which have no groups). Effects on the group clip
+    /// itself are lost.
+    pub fn flattened(&self) -> Self {
+        let mut p = self.clone();
+        for _ in 0..8 {
+            if !p.all_clips().any(|(_, c)| c.media == MediaKind::Compound) {
+                break;
+            }
+            let mut tracks: Vec<Track> = vec![];
+            let mut extra_audio: Vec<Track> = vec![];
+            for t in &p.tracks {
+                let mut base = Track { clips: vec![], ..t.clone() };
+                let mut above: Vec<Track> = vec![];
+                for c in &t.clips {
+                    if c.media != MediaKind::Compound {
+                        base.clips.push(c.clone());
+                        continue;
+                    }
+                    let mut first_video = None;
+                    for (kind, ti, muted, n) in p.expand(c, 0) {
+                        let dest = if kind == TrackKind::Audio {
+                            while extra_audio.len() <= ti {
+                                let id = format!("{}-a{}", t.id, extra_audio.len() + 1);
+                                extra_audio.push(Track { id, kind: TrackKind::Audio, muted, hidden: false, locked: false, duck: false, clips: vec![] });
+                            }
+                            &mut extra_audio[ti]
+                        } else {
+                            let first = *first_video.get_or_insert(ti);
+                            if ti == first {
+                                &mut base
+                            } else {
+                                let k = ti - first - 1;
+                                while above.len() <= k {
+                                    let id = format!("{}-v{}", t.id, above.len() + 2);
+                                    above.push(Track { id, kind: TrackKind::Video, muted: false, hidden: false, locked: false, duck: false, clips: vec![] });
+                                }
+                                &mut above[k]
+                            }
+                        };
+                        dest.clips.push(n);
+                    }
+                }
+                base.clips.sort_by_key(|c| c.start);
+                tracks.push(base);
+                for mut a in above {
+                    a.clips.sort_by_key(|c| c.start);
+                    tracks.push(a);
+                }
+            }
+            for mut a in extra_audio {
+                a.clips.sort_by_key(|c| c.start);
+                tracks.push(a);
+            }
+            p.tracks = tracks;
+        }
+        p.compounds.clear();
+        p
     }
 
     pub fn load(path: &Path) -> crate::Result<Self> {

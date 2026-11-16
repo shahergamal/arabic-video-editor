@@ -1,5 +1,6 @@
 // Interface words in Arabic and English. Arabic is the default.
 import { useSyncExternalStore } from "react";
+import { ar5, en5 } from "./i18n5";
 
 const ar = {
   app: "محرر الفيديو",
@@ -317,7 +318,8 @@ const ar = {
   noSelection: "لا شيء مختار",
   clip: "مقطع",
   emptyHint: "ابدأ باستيراد فيديو من لوحة الوسائط، ثم اضغط + لإضافته للخط الزمني.",
-  shortcutsHint: "مسافة: تشغيل · S: قص · Delete: حذف · Ctrl+Z: تراجع",
+  shortcutsHint: "مسافة: تشغيل · J/K/L: رجوع/وقوف/تقديم · S: قص · M: علامة · F: تجميد · Ctrl+C/V/D: نسخ/لصق/تكرار · Ctrl+G: تجميع · Alt+سحب: تحريك المحتوى · Delete: حذف · Ctrl+Z: تراجع",
+  ...ar5,
 };
 
 type Key = keyof typeof ar;
@@ -638,7 +640,8 @@ const en: Record<Key, string> = {
   noSelection: "Nothing selected",
   clip: "Clip",
   emptyHint: "Start by importing a video in the Media panel, then press + to add it to the timeline.",
-  shortcutsHint: "Space: play · S: split · Delete: delete · Ctrl+Z: undo",
+  shortcutsHint: "Space: play · J/K/L: back/stop/forward · S: split · M: marker · F: freeze · Ctrl+C/V/D: copy/paste/duplicate · Ctrl+G: group · Alt+drag: slip/roll · Delete: delete · Ctrl+Z: undo",
+  ...en5,
 };
 
 type Lang = "ar" | "en";
@@ -652,6 +655,7 @@ let lang: Lang = (() => {
 const listeners = new Set<() => void>();
 
 function apply() {
+  if (typeof document === "undefined") return;
   document.documentElement.lang = lang;
   document.documentElement.dir = lang === "ar" ? "rtl" : "ltr";
 }

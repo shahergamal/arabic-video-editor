@@ -23,6 +23,7 @@ export function transformAt(c: Clip, frame: number): Transform {
     x: mix(a.transform.x, b.transform.x),
     y: mix(a.transform.y, b.transform.y),
     opacity: mix(a.transform.opacity, b.transform.opacity),
+    rotation: mix(a.transform.rotation ?? 0, b.transform.rotation ?? 0),
   };
 }
 

@@ -2,8 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { mediaInfo, thumbnailOf, waveformOf } from "./api";
 import { addTrack, place, removeTrack, snap } from "./edits";
 import { speedOf } from "./motion";
+import { removeMarker, roll, slip } from "./edits5";
 import { useT } from "./i18n";
-import type { Clip, Project, TextLayer, Track } from "./types";
+import type { Clip, Project, Shape, TextLayer, Track } from "./types";
 import { fileName, formatTime, fpsValue, projectDuration } from "./types";
 
 interface Props {
@@ -13,18 +14,24 @@ interface Props {
   onSeek: (f: number) => void;
   onSelect: (id: string | null) => void;
   onCommit: (p: Project) => void;
+  /** Clips picked together with Ctrl or Shift (besides `selected`). */
+  picked?: string[];
+  onPick?: (ids: string[]) => void;
 }
 
+type Mode = "move" | "trimStart" | "trimEnd" | "slip" | "rollStart" | "rollEnd";
 type Drag =
-  | { kind: "clip"; mode: "move" | "trimStart" | "trimEnd"; id: string; x0: number; orig: Clip; trackId: string }
-  | { kind: "text"; mode: "move" | "trimStart" | "trimEnd"; id: string; x0: number; orig: TextLayer };
+  | { kind: "clip"; mode: Mode; id: string; x0: number; orig: Clip; trackId: string }
+  | { kind: "text"; mode: Mode; id: string; x0: number; orig: TextLayer }
+  | { kind: "shape"; mode: Mode; id: string; x0: number; orig: Shape };
 
 const HEADER = 128;
+const SHAPE_ICON: Record<Shape["kind"], string> = { rect: "▬", ellipse: "●", line: "━", arrow: "➜", star: "★" };
 const EDGE = 7;
 
 /** Texts that overlap in time go on separate rows so none hides another. */
-function textLanes(texts: TextLayer[]): TextLayer[][] {
-  const lanes: TextLayer[][] = [];
+function textLanes<T extends { start: number; duration: number }>(texts: T[]): T[][] {
+  const lanes: T[][] = [];
   for (const t of [...texts].sort((a, b) => a.start - b.start)) {
     const free = lanes.find((l) => l.every((o) => t.start >= o.start + o.duration || t.start + t.duration <= o.start));
     if (free) free.push(t);
@@ -33,7 +40,7 @@ function textLanes(texts: TextLayer[]): TextLayer[][] {
   return lanes.length ? lanes : [[]];
 }
 
-export function Timeline({ project, frame, selected, onSeek, onSelect, onCommit }: Props) {
+export function Timeline({ project, frame, selected, onSeek, onSelect, onCommit, picked = [], onPick }: Props) {
   const t = useT();
   const scroller = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(800);
@@ -61,7 +68,7 @@ export function Timeline({ project, frame, selected, onSeek, onSelect, onCommit 
   // Source lengths, so a trim can't go past the end of a file.
   useEffect(() => {
     for (const c of project.tracks.flatMap((tr) => tr.clips)) {
-      if (c.media === "image" || durations[c.source] !== undefined) continue;
+      if (c.media === "image" || c.media === "compound" || durations[c.source] !== undefined) continue;
       mediaInfo(c.source)
         .then((i) => setDurations((d) => ({ ...d, [c.source]: i.duration })))
         .catch(() => {});
@@ -69,6 +76,16 @@ export function Timeline({ project, frame, selected, onSeek, onSelect, onCommit 
   }, [project, durations]);
 
   const lanes = useMemo(() => textLanes(shown.texts), [shown.texts]);
+  const shapeLanes = useMemo(() => (shown.shapes?.length ? textLanes(shown.shapes) : []), [shown.shapes]);
+  // How long a clip's source is, in seconds (a group's own length for group clips).
+  const sourceSeconds = (c: Clip) => {
+    if (c.media === "image" || c.freeze) return Infinity;
+    if (c.media === "compound") {
+      const g = project.compounds?.find((x) => x.id === c.source);
+      return g ? Math.max(0, ...g.tracks.flatMap((tr) => tr.clips.map((y) => y.start + y.duration))) / fps : Infinity;
+    }
+    return durations[c.source] ?? Infinity;
+  };
   const videoTracks = [...shown.tracks.filter((tr) => tr.kind === "video")].reverse();
   const audioTracks = shown.tracks.filter((tr) => tr.kind === "audio");
 
@@ -82,23 +99,37 @@ export function Timeline({ project, frame, selected, onSeek, onSelect, onCommit 
 
   const startDrag = (e: React.PointerEvent, d: Drag) => {
     e.stopPropagation();
+    // Ctrl or Shift: add to (or take out of) the picked clips instead of dragging.
+    if (d.kind === "clip" && (e.ctrlKey || e.metaKey || e.shiftKey) && onPick) {
+      const all = new Set([...picked, ...(selected ? [selected] : [])]);
+      if (all.has(d.id)) all.delete(d.id);
+      else all.add(d.id);
+      onPick([...all]);
+      return;
+    }
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     onSelect(d.id);
+    onPick?.([]);
     setDrag(d);
   };
 
-  const modeFor = (e: React.PointerEvent): "move" | "trimStart" | "trimEnd" => {
+  // Alt (Option) changes the tools: middle = slip, edge = roll.
+  const modeFor = (e: React.PointerEvent): Mode => {
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    if (e.clientX - r.left < EDGE) return "trimStart";
-    if (r.right - e.clientX < EDGE) return "trimEnd";
-    return "move";
+    const edge = e.clientX - r.left < EDGE ? "trimStart" : r.right - e.clientX < EDGE ? "trimEnd" : "move";
+    if (e.altKey) return edge === "move" ? "slip" : edge === "trimStart" ? "rollStart" : "rollEnd";
+    return edge;
+  };
+  const plainMode = (e: React.PointerEvent): Mode => {
+    const m = modeFor(e);
+    return m === "slip" ? "move" : m === "rollStart" ? "trimStart" : m === "rollEnd" ? "trimEnd" : m;
   };
 
   const onMove = (e: React.PointerEvent) => {
     if (!drag) return;
     const df = Math.round((e.clientX - drag.x0) / ppf);
-    if (drag.kind === "text") {
-      const o = drag.orig;
+    if (drag.kind === "text" || drag.kind === "shape") {
+      const o = drag.orig as TextLayer | Shape;
       let next = { ...o };
       if (drag.mode === "move") {
         let s = Math.max(0, o.start + df);
@@ -113,11 +144,25 @@ export function Timeline({ project, frame, selected, onSeek, onSelect, onCommit 
         const end = Math.max(o.start + 1, snapped(o.start + o.duration + df, o.id));
         next.duration = end - o.start;
       }
-      setDraft({ ...project, texts: project.texts.map((x) => (x.id === o.id ? next : x)) });
+      if (drag.kind === "text") setDraft({ ...project, texts: project.texts.map((x) => (x.id === o.id ? (next as TextLayer) : x)) });
+      else setDraft({ ...project, shapes: (project.shapes ?? []).map((x) => (x.id === o.id ? (next as Shape) : x)) });
       return;
     }
     const o = drag.orig;
-    const srcLen = o.media === "image" ? Infinity : (durations[o.source] ?? Infinity);
+    const srcLen = sourceSeconds(o);
+    if (drag.mode === "slip") {
+      // Dragging right shows an earlier part, like pulling the film along.
+      setDraft(place(project, drag.trackId, slip(o, -df, fps, srcLen)));
+      return;
+    }
+    if (drag.mode === "rollStart" || drag.mode === "rollEnd") {
+      const tr = project.tracks.find((x) => x.id === drag.trackId)!;
+      const left = tr.clips.find((c) => c.start + c.duration === o.start);
+      const right = tr.clips.find((c) => c.start === o.start + o.duration);
+      const pair = drag.mode === "rollStart" ? (left ? [left, o] : null) : right ? [o, right] : null;
+      if (pair) setDraft(roll(project, pair[0].id, pair[1].id, df, sourceSeconds));
+      return;
+    }
     let next = { ...o };
     let trackId = drag.trackId;
     if (drag.mode === "move") {
@@ -199,8 +244,9 @@ export function Timeline({ project, frame, selected, onSeek, onSelect, onCommit 
       clip={c}
       left={x(c.start)}
       width={Math.max(2, x(c.duration))}
-      selected={selected === c.id}
+      selected={selected === c.id || picked.includes(c.id)}
       fps={fps}
+      name={c.media === "compound" ? (project.compounds?.find((g) => g.id === c.source)?.name ?? "") : undefined}
       sourceDuration={durations[c.source]}
       onPointerDown={(e) => {
         if (tr.locked) return;
@@ -247,6 +293,22 @@ export function Timeline({ project, frame, selected, onSeek, onSelect, onCommit 
             onPointerMove={(e) => e.buttons === 1 && !drag && onSeek(frameAt(e.clientX))}
           >
             <div className="track-head" />
+            {(project.markers ?? []).map((m) => (
+              <span
+                key={m.frame}
+                className="marker"
+                style={{ left: HEADER + x(m.frame), background: m.color }}
+                title={`${m.label || t("marker")} · ${formatTime(m.frame, project.fps)} · ${t("markerRemoveHint")}`}
+                onPointerDown={(e) => {
+                  e.stopPropagation();
+                  onSeek(m.frame);
+                }}
+                onDoubleClick={(e) => {
+                  e.stopPropagation();
+                  onCommit(removeMarker(project, m.frame));
+                }}
+              />
+            ))}
             {ticks.map((s) => (
               <span key={s} className="tick" style={{ left: HEADER + x(s * fps) }}>
                 {formatTime(Math.round(s * fps), project.fps).replace(/\.00$/, "")}
@@ -263,10 +325,28 @@ export function Timeline({ project, frame, selected, onSeek, onSelect, onCommit 
                     key={tx.id}
                     className={`item text ${selected === tx.id ? "sel" : ""}`}
                     style={{ left: x(tx.start), width: Math.max(2, x(tx.duration)) }}
-                    onPointerDown={(e) => startDrag(e, { kind: "text", mode: modeFor(e), id: tx.id, x0: e.clientX, orig: tx })}
+                    onPointerDown={(e) => startDrag(e, { kind: "text", mode: plainMode(e), id: tx.id, x0: e.clientX, orig: tx })}
                     dir="auto"
                   >
                     {tx.text}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+
+          {shapeLanes.map((lane, i) => (
+            <div className="row shape-row" key={`s${i}`}>
+              {header(null, i === 0 ? t("shapes") : "")}
+              <div className="lane" onPointerDown={() => onSelect(null)}>
+                {lane.map((sh) => (
+                  <div
+                    key={sh.id}
+                    className={`item shape ${selected === sh.id ? "sel" : ""}`}
+                    style={{ left: x(sh.start), width: Math.max(2, x(sh.duration)) }}
+                    onPointerDown={(e) => startDrag(e, { kind: "shape", mode: plainMode(e), id: sh.id, x0: e.clientX, orig: sh })}
+                  >
+                    {SHAPE_ICON[sh.kind]}
                   </div>
                 ))}
               </div>
@@ -305,6 +385,8 @@ function ClipView(props: {
   selected: boolean;
   fps: number;
   sourceDuration?: number;
+  /** A group's name, for group clips. */
+  name?: string;
   onPointerDown: (e: React.PointerEvent) => void;
 }) {
   const { clip, left, width, selected } = props;
@@ -312,13 +394,13 @@ function ClipView(props: {
   const canvas = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
-    if (clip.media === "audio") return;
+    if (clip.media === "audio" || clip.media === "compound") return;
     thumbnailOf(clip.source).then(setThumb).catch(() => {});
   }, [clip.source, clip.media]);
 
   // Waveform of the part of the file this clip plays.
   useEffect(() => {
-    if (clip.media === "image" || !props.sourceDuration) return;
+    if (clip.media === "image" || clip.media === "compound" || clip.freeze || clip.reverse || !props.sourceDuration) return;
     let alive = true;
     waveformOf(clip.source).then((peaks) => {
       const c = canvas.current;
@@ -348,10 +430,13 @@ function ClipView(props: {
       className={`item clip ${clip.media} ${selected ? "sel" : ""}`}
       style={{ left, width, backgroundImage: thumb ? `url(${thumb})` : undefined }}
       onPointerDown={props.onPointerDown}
-      title={fileName(clip.source)}
+      title={props.name ?? fileName(clip.source)}
     >
-      <span className="clip-name">{fileName(clip.source)}</span>
-      {clip.media !== "image" && <canvas ref={canvas} className="wave" />}
+      <span className="clip-name">{clip.media === "compound" ? `▣ ${props.name ?? ""}` : fileName(clip.source)}</span>
+      {clip.media !== "image" && clip.media !== "compound" && <canvas ref={canvas} className="wave" />}
+      {clip.reverse && <span className="badge5">◀◀</span>}
+      {clip.freeze && <span className="badge5">❚❚</span>}
+      {(clip.stabilize ?? 0) > 0 && <span className="badge5">≋</span>}
       {clip.transition_in && <span className="trans" style={{ width: (clip.transition_in.frames / clip.duration) * 100 + "%" }} />}
       {speedOf(clip) !== 1 && <span className="speed">{speedOf(clip)}×</span>}
       {!!clip.keyframes?.length && <span className="moving">◆</span>}

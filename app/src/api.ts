@@ -7,6 +7,8 @@ export interface ExportJob {
   height: number;
   crf: number;
   fill?: boolean;
+  /** "auto" uses the graphics card when it works, "cpu" never does. */
+  encoder?: "auto" | "cpu";
 }
 
 export interface TemplateInfo {

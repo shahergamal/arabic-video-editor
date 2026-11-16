@@ -36,6 +36,7 @@ impl State {
         };
         let mut preview = Compositor::with_font_dirs(&s.font_dirs());
         preview.mattes = Some(crate::tools::matte_setup(&s.data_dir));
+        preview.copies = Some(crate::phase5::copies_dir(&s.data_dir));
         *s.preview.lock().unwrap() = preview;
         s
     }
@@ -277,7 +278,14 @@ pub fn open_project(state: tauri::State<State>, path: PathBuf) -> Res<Project> {
 /// Files the project uses that are no longer where they were.
 #[tauri::command]
 pub fn missing_media(project: Project) -> Vec<PathBuf> {
-    let mut out: Vec<PathBuf> = project.all_clips().map(|(_, c)| c.source.clone()).filter(|p| !p.exists()).collect();
+    let mut out: Vec<PathBuf> = project
+        .all_clips()
+        .map(|(_, c)| c)
+        .chain(project.compounds.iter().flat_map(|g| g.tracks.iter().flat_map(|t| t.clips.iter())))
+        .filter(|c| c.is_file())
+        .map(|c| c.source.clone())
+        .filter(|p| !p.exists())
+        .collect();
     out.sort();
     out.dedup();
     out
@@ -319,6 +327,13 @@ pub struct ExportJob {
     /// For other shapes: enlarge full-frame pictures to fill the new frame.
     #[serde(default = "yes")]
     fill: bool,
+    /// "auto" (graphics card when it works) or "cpu".
+    #[serde(default = "auto_enc")]
+    encoder: String,
+}
+
+fn auto_enc() -> String {
+    "auto".into()
 }
 
 fn yes() -> bool {
@@ -346,6 +361,7 @@ pub fn start_export(app: AppHandle, state: tauri::State<State>, jobs: Vec<Export
     std::thread::spawn(move || {
         let mut comp = Compositor::with_font_dirs(&dirs);
         comp.mattes = Some(crate::tools::matte_setup(&data_dir));
+        comp.copies = Some(crate::phase5::copies_dir(&data_dir));
         let even = |v: u32| (v / 2 * 2).max(2);
         let count = jobs.len();
         let mut made = vec![];
@@ -360,7 +376,7 @@ pub fn start_export(app: AppHandle, state: tauri::State<State>, jobs: Vec<Export
             } else {
                 project.reframed(w, h, job.fill, |p| probe(p).ok().map(|i| (i.width, i.height)))
             };
-            let settings = ExportSettings { width: w, height: h, crf: job.crf.clamp(10, 35) };
+            let settings = ExportSettings { width: w, height: h, crf: job.crf.clamp(10, 35), encoder: job.encoder.clone() };
             let mut last = std::time::Instant::now();
             let res = export(&version, &mut comp, &settings, &job.path, &cancel, |done, total| {
                 if last.elapsed().as_millis() > 100 || done == total {

@@ -19,10 +19,10 @@ export function Slider(props: { label: string; min: number; max: number; step: n
 }
 
 const pct = (v: number) => `${Math.round(v * 100)}٪`;
-type Busy = { done: number; total: number } | null;
+export type Busy = { done: number; total: number } | null;
 
 /** Listens to "<name>-progress" / "<name>-finished" while mounted. */
-function useJob<T>(name: string, onDone: (ok: boolean, message: string, result: T | null) => void) {
+export function useJob<T>(name: string, onDone: (ok: boolean, message: string, result: T | null) => void) {
   const [busy, setBusy] = useState<Busy>(null);
   useEffect(() => {
     const a = listen<{ done: number; total: number }>(`${name}-progress`, (e) => setBusy(e.payload));
@@ -39,7 +39,7 @@ function useJob<T>(name: string, onDone: (ok: boolean, message: string, result: 
   return [busy, setBusy] as const;
 }
 
-function Progress({ busy, label }: { busy: Busy; label: string }) {
+export function Progress({ busy, label }: { busy: Busy; label: string }) {
   const t = useT();
   if (!busy) return null;
   const p = Math.round((100 * busy.done) / Math.max(1, busy.total));

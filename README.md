@@ -23,6 +23,19 @@
 | ← → | إطار واحد (مع Shift: ثانية) |
 | Ctrl+Z / Ctrl+Shift+Z | تراجع / إعادة |
 | Ctrl+S | حفظ المشروع |
+| J / K / L | رجوع / وقوف / تقديم (اضغط L تاني للسرعة 2× و4×) |
+| M | علامة عند المؤشر |
+| ↑ ↓ | القفز للقطع أو العلامة اللي قبل/بعد |
+| F | تجميد الصورة عند المؤشر |
+| Ctrl+C / Ctrl+V / Ctrl+D | نسخ / لصق عند المؤشر / تكرار |
+| Ctrl + ضغطة | اختيار أكتر من مقطع |
+| Ctrl+G / Ctrl+Shift+G | تجميع المقاطع المختارة / فك المجموعة |
+| Alt + سحب | وسط المقطع: تحريك المحتوى جوه (slip) · طرف المقطع: تحريك القطع بين مقطعين (roll) |
+
+## النشر على السوشيال ميديا
+
+زرار **نشر** فوق بيصدّر الفيديو بالمقاس الصح لفيسبوك وانستجرام وتيك توك (بوست، ريل، ستوري) مع الكابشن والهاشتاجات.
+النشر المباشر من البرنامج محتاج ربط الحسابات مرة واحدة: الخطوات في [docs/publishing-ar.md](docs/publishing-ar.md).
 
 ## ضمانات مُختبرة تلقائياً مع كل تعديل
 
@@ -42,7 +55,7 @@ crates/engine      Rust engine: project model, decoding (ffmpeg process), Arabic
 app/               Tauri 2 desktop app: React + TypeScript UI in app/src,
                    Rust commands in app/src-tauri
 assets/fonts       Bundled open-license fonts + manifest.json (each with its license)
-scripts/           fetch-fonts.mjs, fetch-ffmpeg.mjs
+scripts/           fetch-fonts.mjs, fetch-ffmpeg.mjs, build-windows.ps1 (build + install on Windows)
 ```
 
 Requirements: Rust (stable), Node 22, ffmpeg on PATH for tests.

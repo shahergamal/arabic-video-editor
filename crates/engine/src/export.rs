@@ -3,7 +3,7 @@
 
 use crate::compose::Compositor;
 use crate::media::{command, ffmpeg_path, probe};
-use crate::project::Project;
+use crate::project::{Clip, Project};
 use crate::{Error, Result};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -16,23 +16,97 @@ pub struct ExportSettings {
     pub height: u32,
     /// x264 quality: 18 is visually lossless, 23 is the usual default.
     pub crf: u8,
+    /// "auto" (graphics card when there is one that works), "cpu", or an
+    /// ffmpeg encoder name such as "h264_nvenc".
+    #[serde(default = "auto")]
+    pub encoder: String,
+}
+
+fn auto() -> String {
+    "auto".into()
 }
 
 impl ExportSettings {
     pub fn for_project(p: &Project) -> Self {
-        Self { width: p.width, height: p.height, crf: 18 }
+        Self { width: p.width, height: p.height, crf: 18, encoder: "cpu".into() }
     }
+}
+
+/// Graphics-card encoders to try, best first.
+const HARDWARE: &[&str] = &["h264_videotoolbox", "h264_nvenc", "h264_qsv", "h264_amf"];
+
+/// Hardware encoders that really work on this computer: each one is asked
+/// to encode a tiny test clip (listing it is not enough, the card or its
+/// driver may be missing). Checked once.
+pub fn hardware_encoders() -> Vec<String> {
+    static FOUND: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    FOUND
+        .get_or_init(|| {
+            let listed = command(ffmpeg_path())
+                .args(["-hide_banner", "-encoders"])
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+                .unwrap_or_default();
+            HARDWARE
+                .iter()
+                .filter(|e| listed.split_whitespace().any(|w| w == **e))
+                .filter(|e| {
+                    command(ffmpeg_path())
+                        .args(["-v", "error", "-nostdin", "-f", "lavfi", "-i", "color=c=gray:s=256x256:r=30:d=0.2"])
+                        .args(["-pix_fmt", "yuv420p", "-c:v", e, "-f", "null", "-"])
+                        .stdin(Stdio::null())
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null())
+                        .status()
+                        .map(|s| s.success())
+                        .unwrap_or(false)
+                })
+                .map(|e| e.to_string())
+                .collect()
+        })
+        .clone()
+}
+
+/// The encoder an export will use.
+pub fn pick_encoder(wanted: &str) -> String {
+    match wanted {
+        "cpu" | "libx264" => "libx264".into(),
+        "auto" => hardware_encoders().into_iter().next().unwrap_or_else(|| "libx264".into()),
+        other if hardware_encoders().iter().any(|e| e == other) => other.into(),
+        _ => "libx264".into(),
+    }
+}
+
+/// Quality settings for each encoder, matched roughly to x264's `crf`.
+fn codec_args(encoder: &str, crf: u8) -> Vec<String> {
+    let q = crf.to_string();
+    let v: Vec<&str> = match encoder {
+        "h264_nvenc" => vec!["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", &q, "-b:v", "0", "-profile:v", "high"],
+        "h264_qsv" => vec!["-c:v", "h264_qsv", "-global_quality", &q, "-look_ahead", "1"],
+        "h264_amf" => vec!["-c:v", "h264_amf", "-rc", "cqp", "-qp_i", &q, "-qp_p", &q, "-quality", "quality"],
+        "h264_videotoolbox" => {
+            // 0-100, higher is better; crf 18 → about 65.
+            let vt = (100.0 - crf as f32 * 1.95).clamp(20.0, 95.0).round().to_string();
+            return ["-c:v", "h264_videotoolbox", "-q:v", &vt, "-allow_sw", "1"].iter().map(|s| s.to_string()).collect();
+        }
+        _ => vec!["-c:v", "libx264", "-preset", "medium", "-crf", &q],
+    };
+    v.into_iter().map(String::from).collect()
 }
 
 /// The sound of the whole timeline: each clip trimmed, sped up or slowed,
 /// faded and placed where it sits, then mixed. Inputs are numbered from
 /// `first_input`; the result is labelled `[aout]`.
-fn audio_graph(project: &Project, first_input: usize) -> (Vec<&crate::project::Clip>, String) {
-    let audio_inputs: Vec<_> = project
-        .audible_clips()
-        .into_iter()
-        .filter(|c| probe(&c.source).map(|i| i.has_audio).unwrap_or(false))
-        .collect();
+fn audio_graph(project: &Project, first_input: usize, file: &mut dyn FnMut(&Clip) -> Result<PathBuf>) -> Result<(Vec<PathBuf>, String)> {
+    let mut audio_inputs: Vec<Clip> = vec![];
+    let mut files = vec![];
+    for c in project.audible_clips() {
+        let f = file(&c)?;
+        if probe(&f).map(|i| i.has_audio).unwrap_or(false) {
+            audio_inputs.push(c);
+            files.push(f);
+        }
+    }
     let total_seconds = project.fps.frame_to_seconds(project.duration());
     let mut graph = String::new();
     let (mut music, mut speech) = (vec![], vec![]);
@@ -92,21 +166,42 @@ fn audio_graph(project: &Project, first_input: usize) -> (Vec<&crate::project::C
         .loudness
         .map(|l| format!("loudnorm=I={l:.1}:TP=-1.5:LRA=11,aresample=48000,"))
         .unwrap_or_default();
-    graph += &format!("[{pre}]{loud}apad,atrim=duration={total_seconds:.6}[aout]");
-    (audio_inputs, graph)
+    graph += &format!("[{pre}]{loud}apad=whole_dur={total_seconds:.6},atrim=duration={total_seconds:.6}[aout]");
+    Ok((files, graph))
+}
+
+/// The file whose sound a clip plays: its working copy (reversed or
+/// steadied) when it has one, else the original.
+fn sound_file(copies: Option<&Path>, c: &Clip) -> PathBuf {
+    match copies {
+        Some(dir) if crate::derive::needs_copy(c) => {
+            let p = crate::derive::copy_path(dir, c);
+            if p.exists() {
+                p
+            } else {
+                c.source.clone()
+            }
+        }
+        _ => c.source.clone(),
+    }
 }
 
 /// The mixed sound of the whole timeline as mono samples (for captions).
 /// Empty if nothing on the timeline has sound.
 pub fn mix_audio(project: &Project, sample_rate: u32) -> Result<Vec<f32>> {
-    let (inputs, graph) = audio_graph(project, 0);
+    mix_audio_with(project, sample_rate, None)
+}
+
+/// Like `mix_audio`, using working copies from `copies` where they exist.
+pub fn mix_audio_with(project: &Project, sample_rate: u32, copies: Option<&Path>) -> Result<Vec<f32>> {
+    let (inputs, graph) = audio_graph(project, 0, &mut |c| Ok(sound_file(copies, c)))?;
     if inputs.is_empty() {
         return Ok(vec![]);
     }
     let mut cmd = command(ffmpeg_path());
     cmd.args(["-v", "error", "-nostdin"]);
-    for c in &inputs {
-        cmd.arg("-i").arg(&c.source);
+    for f in &inputs {
+        cmd.arg("-i").arg(f);
     }
     let out = cmd
         .args(["-filter_complex", &graph, "-map", "[aout]"])
@@ -128,7 +223,32 @@ pub fn export(
     cancel: &AtomicBool,
     mut progress: impl FnMut(u64, u64),
 ) -> Result<()> {
+    let encoder = pick_encoder(&settings.encoder);
+    match export_with(project, compositor, settings, &encoder, out, cancel, &mut progress) {
+        // A graphics card can still fail on a size or setting it does not
+        // take: do it again on the processor rather than give up.
+        Err(Error::Ffmpeg(_)) if encoder != "libx264" && !cancel.load(Ordering::Relaxed) => {
+            export_with(project, compositor, settings, "libx264", out, cancel, &mut progress)
+        }
+        r => r,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn export_with(
+    project: &Project,
+    compositor: &mut Compositor,
+    settings: &ExportSettings,
+    encoder: &str,
+    out: &Path,
+    cancel: &AtomicBool,
+    progress: &mut dyn FnMut(u64, u64),
+) -> Result<()> {
     let total = project.duration();
+    // Working copies are made before the first frame, not in the middle.
+    if compositor.copies.is_some() {
+        compositor.make_copies = true;
+    }
     let (w, h) = (settings.width, settings.height);
     // Write to a temporary name so a cancelled or failed export never leaves a
     // broken file with the final name.
@@ -139,9 +259,19 @@ pub fn export(
         .args(["-f", "rawvideo", "-pix_fmt", "rgba", "-s", &format!("{w}x{h}")])
         .args(["-r", &project.fps.as_ffmpeg(), "-i", "-"]);
 
-    let (audio_inputs, graph) = audio_graph(project, 1);
-    for clip in &audio_inputs {
-        cmd.arg("-i").arg(&clip.source);
+    let (audio_inputs, graph) = audio_graph(project, 1, &mut |c| {
+        if crate::derive::needs_copy(c) && compositor.copies.is_some() {
+            // Makes the copy now if it is missing.
+            let keep = std::mem::replace(&mut compositor.make_copies, true);
+            let f = compositor.source_file(c);
+            compositor.make_copies = keep;
+            f
+        } else {
+            Ok(c.source.clone())
+        }
+    })?;
+    for f in &audio_inputs {
+        cmd.arg("-i").arg(f);
     }
     if !audio_inputs.is_empty() {
         cmd.args(["-filter_complex", &graph, "-map", "0:v", "-map", "[aout]"])
@@ -154,7 +284,7 @@ pub fn export(
     // the file with them, so players show the same colours as the preview.
     cmd.args(["-vf", "scale=out_color_matrix=bt709:out_range=tv,format=yuv420p"])
         .args(["-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709"])
-        .args(["-c:v", "libx264", "-preset", "medium", "-crf", &settings.crf.to_string()])
+        .args(codec_args(encoder, settings.crf))
         .args(["-movflags", "+faststart", "-f", "mp4"])
         .arg(&partial)
         .stdin(Stdio::piped())

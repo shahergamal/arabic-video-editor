@@ -34,8 +34,13 @@ fn warnings(p: &Project, speed_kept: bool) -> Vec<String> {
     if !p.texts.is_empty() {
         w.push("texts".into());
     }
+    if !p.shapes.is_empty() {
+        w.push("shapes".into());
+    }
     let clips: Vec<&Clip> = p.all_clips().map(|(_, c)| c).collect();
-    if clips.iter().any(|c| !c.adjust.is_neutral() || c.chroma.is_some() || c.remove_bg.is_some() || c.mask.is_some()) {
+    if clips.iter().any(|c| !c.adjust.is_neutral() || c.chroma.is_some() || c.remove_bg.is_some() || c.mask.is_some()
+        || c.reverse || c.freeze || c.flip_h || c.flip_v || !c.crop.is_none() || !c.blend.is_empty() || c.stabilize > 0.0)
+    {
         w.push("effects".into());
     }
     if clips.iter().any(|c| !c.keyframes.is_empty() || c.transform != Default::default()) {
@@ -81,6 +86,8 @@ fn range(start: f64, duration: f64, rate: f64) -> Value {
 
 /// An OpenTimelineIO file of the project.
 pub fn to_otio(p: &Project) -> Exported {
+    let flat = p.flattened();
+    let p = &flat;
     let rate = fps_f(p.fps);
     let tracks: Vec<Value> = p
         .tracks
@@ -303,6 +310,8 @@ fn timebase(f: Fps) -> (u32, bool) {
 /// A Final Cut Pro 7 XML file (Premiere Pro: File → Import; Resolve:
 /// File → Import Timeline).
 pub fn to_fcp7_xml(p: &Project) -> Exported {
+    let flat = p.flattened();
+    let p = &flat;
     let (tb, ntsc) = timebase(p.fps);
     let rate = format!("<rate><timebase>{tb}</timebase><ntsc>{}</ntsc></rate>", if ntsc { "TRUE" } else { "FALSE" });
     let fps = fps_f(p.fps);
@@ -471,6 +480,8 @@ fn timecode(frames: u64, nominal: u64) -> String {
 /// only. Clip names and full paths are written as comments, which Premiere
 /// and Resolve use to find the files.
 pub fn to_edl(p: &Project) -> Exported {
+    let flat = p.flattened();
+    let p = &flat;
     let nominal = fps_f(p.fps).round().max(1.0) as u64;
     let mut out = format!("TITLE: {}\nFCM: NON-DROP FRAME\n\n", p.name.replace('\n', " "));
     let mut events: Vec<(&Clip, &str)> = vec![];

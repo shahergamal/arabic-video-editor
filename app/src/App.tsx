@@ -20,11 +20,19 @@ import { switchAngle } from "./multicam";
 import { ClipProperties, TextProperties } from "./Properties";
 import { TextPresets } from "./TextPresets";
 import { Timeline } from "./Timeline";
-import type { FontInfo, Project, TextLayer } from "./types";
+import { addMarker, closeGaps, detachAudio, duplicate, freezeFrame, group, nextStop, paste, ungroup } from "./edits5";
+import { AutoEditPanel, BeatSection, ReframeSection, ShapeProperties, ShapesPanel, UpdateBanner, VoiceRecorder } from "./Phase5Panels";
+import { PublishDialog } from "./PublishDialog";
+import { Section } from "./Properties";
+import type { Clip, FontInfo, Project, TextLayer } from "./types";
 import { AUDIO_EXT, IMAGE_EXT, VIDEO_EXT, allClips, fileName, formatTime, fpsValue, newId, newProject, normalize, projectDuration } from "./types";
 
-type Tab = "media" | "text" | "captions" | "fonts" | "assistant";
+type Tab = "media" | "text" | "captions" | "auto" | "fonts" | "assistant";
 const MEDIA_EXT = new Set([...VIDEO_EXT, ...IMAGE_EXT, ...AUDIO_EXT]);
+/** Every file the project uses, groups included (group clips are not files). */
+const mediaSources = (p: Project) => [
+  ...new Set([...allClips(p), ...(p.compounds ?? []).flatMap((g) => g.tracks.flatMap((t) => t.clips))].filter((c) => c.media !== "compound").map((c) => c.source)),
+];
 
 export function App() {
   const t = useT();
@@ -43,6 +51,11 @@ export function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const [brand, setBrand] = useBrand();
   const [templateName, setTemplateName] = useState<string | null>(null);
+  const [picked, setPicked] = useState<string[]>([]);
+  const [clipboard, setClipboard] = useState<Clip | null>(null);
+  const [publishing, setPublishing] = useState(false);
+  // J/K/L: negative plays backwards, 1 is normal, 2 and 4 are faster.
+  const [rate, setRate] = useState(1);
 
   const loadFonts = useCallback(() => {
     api
@@ -78,7 +91,7 @@ export function App() {
       setPath(at);
       setFrame(0);
       setSelected(null);
-      setMedia(toItems([...new Set(allClips(n).map((c) => c.source))]));
+      setMedia(toItems(mediaSources(n)));
       api.missing(n).then(setMissing).catch(() => setMissing([]));
     },
     [reset],
@@ -192,25 +205,52 @@ export function App() {
     for (const old of missing) {
       const picked = await openDialog({ title: fileName(old), filters: [{ name: fileName(old), extensions: [...MEDIA_EXT] }] });
       if (typeof picked !== "string") continue;
-      next = { ...next, tracks: next.tracks.map((tr) => ({ ...tr, clips: tr.clips.map((c) => (c.source === old ? { ...c, source: picked } : c)) })) };
+      const swap = (tr: Project["tracks"][number]) => ({ ...tr, clips: tr.clips.map((c) => (c.source === old ? { ...c, source: picked } : c)) });
+      next = { ...next, tracks: next.tracks.map(swap), compounds: next.compounds?.map((g) => ({ ...g, tracks: g.tracks.map(swap) })) };
     }
     commit(next);
     api.missing(next).then(setMissing);
-    setMedia(toItems([...new Set(allClips(next).map((c) => c.source))]));
+    setMedia(toItems(mediaSources(next)));
   }, [project, missing, commit]);
 
   const selText = project?.texts.find((x) => x.id === selected) ?? null;
+  const selShape = project?.shapes?.find((x) => x.id === selected) ?? null;
   const selClip = project ? allClips(project).find((c) => c.id === selected) ?? null : null;
 
   const deleteSelected = useCallback(
     (ripple: boolean) => {
       if (!project || !selected) return;
       if (selText) commit({ ...project, texts: project.texts.filter((x) => x.id !== selected) });
-      else commit(ripple ? rippleDelete(project, selected) : liftDelete(project, selected));
+      else if (selShape) commit({ ...project, shapes: (project.shapes ?? []).filter((x) => x.id !== selected) });
+      else {
+        // Every picked clip goes, last first so ripples don't move the others' places.
+        const ids = [...new Set([selected, ...picked])];
+        const starts = new Map(allClips(project).map((c) => [c.id, c.start]));
+        let next = project;
+        for (const id of ids.sort((a, b) => (starts.get(b) ?? 0) - (starts.get(a) ?? 0))) next = ripple ? rippleDelete(next, id) : liftDelete(next, id);
+        commit(next);
+      }
       setSelected(null);
+      setPicked([]);
     },
-    [project, selected, selText, commit],
+    [project, selected, selText, selShape, picked, commit],
   );
+
+  const groupPicked = useCallback(() => {
+    if (!project) return;
+    const ids = [...new Set([...(selected ? [selected] : []), ...picked])];
+    const next = group(project, ids, `${t("group")} ${(project.compounds?.length ?? 0) + 1}`);
+    if (next !== project) {
+      commit(next);
+      setPicked([]);
+      setSelected(null);
+    } else setNotice(t("groupNeedsTwo"));
+  }, [project, selected, picked, commit, t]);
+
+  const play = useCallback((r: number) => {
+    setRate(r);
+    setPlaying(true);
+  }, []);
 
   // Keyboard shortcuts.
   useEffect(() => {
@@ -222,7 +262,35 @@ export function App() {
       const step = e.shiftKey ? Math.round(fpsValue(project.fps)) : 1;
       if (e.code === "Space") {
         e.preventDefault();
+        setRate(1);
         setPlaying((p) => !p);
+      } else if (!mod && e.code === "KeyK") {
+        setPlaying(false);
+      } else if (!mod && e.code === "KeyL") {
+        // Each press goes faster: 1×, 2×, 4×.
+        play(playing && rate > 0 ? Math.min(4, rate * 2) : 1);
+      } else if (!mod && e.code === "KeyJ") {
+        play(playing && rate < 0 ? Math.max(-4, rate * 2) : -1);
+      } else if (!mod && e.code === "KeyM") {
+        commit(addMarker(project, frame));
+      } else if (!mod && e.code === "KeyF" && selClip) {
+        commit(freezeFrame(project, selClip.id, frame));
+      } else if (e.code === "ArrowUp" || e.code === "ArrowDown") {
+        e.preventDefault();
+        setFrame(nextStop(project, frame, e.code === "ArrowDown"));
+      } else if (mod && e.code === "KeyC" && selClip) {
+        setClipboard(selClip);
+        setNotice(t("copied"));
+      } else if (mod && e.code === "KeyV" && clipboard) {
+        e.preventDefault();
+        commit(paste(project, clipboard, frame));
+      } else if (mod && e.code === "KeyD" && selClip) {
+        e.preventDefault();
+        commit(duplicate(project, selClip.id));
+      } else if (mod && e.code === "KeyG") {
+        e.preventDefault();
+        if (e.shiftKey && selClip?.media === "compound") commit(ungroup(project, selClip.id));
+        else groupPicked();
       } else if (mod && (e.code === "KeyY" || (e.code === "KeyZ" && e.shiftKey))) {
         e.preventDefault();
         redo();
@@ -253,6 +321,7 @@ export function App() {
         setFrame(end);
       } else if (e.code === "Escape") {
         setSelected(null);
+        setPicked([]);
       } else if (!mod && /^Digit[1-9]$/.test(e.code) && project.angles?.length) {
         // Live multi-camera cutting: the number picks the camera.
         commit(switchAngle(project, frame, +e.code.slice(5) - 1));
@@ -260,11 +329,12 @@ export function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [project, frame, selClip, exporting, commit, undo, redo, saveProject, deleteSelected, quickText]);
+  }, [project, frame, selClip, exporting, commit, undo, redo, saveProject, deleteSelected, quickText, playing, rate, play, clipboard, groupPicked, t]);
 
   if (!project) {
     return (
       <>
+        <UpdateBanner />
         <Home
           onNew={(w, h) => start(newProject(t("untitled"), w, h), null)}
           onOpen={openPath}
@@ -317,6 +387,15 @@ export function App() {
         <button onClick={() => setTemplateName(project.name)}>{t("saveTemplate")}</button>
         <button onClick={toggleLanguage}>{t("language")}</button>
         <button
+          disabled={total === 0}
+          onClick={() => {
+            setPlaying(false);
+            setPublishing(true);
+          }}
+        >
+          {t("publish")}
+        </button>
+        <button
           className="primary"
           disabled={total === 0}
           title="Ctrl+E"
@@ -340,17 +419,38 @@ export function App() {
 
       <aside className="side left">
         <nav className="tabs" role="tablist">
-          {(["media", "text", "captions", "fonts", "assistant"] as const).map((k) => (
+          {(["media", "text", "captions", "auto", "fonts", "assistant"] as const).map((k) => (
             <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>
               {t(k)}
             </button>
           ))}
         </nav>
         <div className="side-scroll">
-          {tab === "media" && <MediaPanel items={media} onImport={importPaths} onAdd={addMedia} />}
+          {tab === "media" && (
+            <>
+              <div className="panel-body record-row">
+                <VoiceRecorder project={project} frame={frame} onCommit={commit} onNotice={setNotice} />
+              </div>
+              <MediaPanel items={media} onImport={importPaths} onAdd={addMedia} />
+            </>
+          )}
+          {tab === "auto" && (
+            <>
+              <AutoEditPanel font={[brand.font ?? "", "Lalezar", "Cairo"].find((f) => families.includes(f)) ?? families[0] ?? "Cairo"} onOpen={(p) => start(p, null)} onNotice={setNotice} />
+              <div className="panel-body">
+                <Section title={t("beatSync")}>
+                  <BeatSection project={project} onCommit={commit} />
+                </Section>
+                <Section title={t("followSubject")}>
+                  <ReframeSection project={project} onOpen={(p) => start(p, null)} />
+                </Section>
+              </div>
+            </>
+          )}
           {tab === "text" && (
             <>
               <TextPresets families={families} brandFont={brand.font} onAdd={addText} />
+              <ShapesPanel project={project} frame={frame} onCommit={commit} onSelect={setSelected} />
               <BrandPanel brand={brand} families={families} onChange={setBrand} onAddLogo={addLogo} />
             </>
           )}
@@ -380,6 +480,7 @@ export function App() {
           revision={revision}
           frame={frame}
           playing={playing}
+          rate={rate}
           onFrame={setFrame}
           onStop={() => setPlaying(false)}
         />
@@ -388,7 +489,12 @@ export function App() {
           <button onClick={() => setFrame(0)} title="Home">
             {t("toStart")}
           </button>
-          <button className="play" onClick={() => setPlaying((p) => !p)} disabled={total === 0} title={t("playPause")} aria-label={t("playPause")}>
+          <button
+            className="play"
+            onClick={() => {
+              setRate(1);
+              setPlaying((p) => !p);
+            }} disabled={total === 0} title={t("playPause")} aria-label={t("playPause")}>
             {playing ? "❚❚" : "▶"}
           </button>
           <span className="time" dir="ltr">
@@ -402,9 +508,17 @@ export function App() {
           <button onClick={() => commit(splitAt(project, frame, selClip?.id))} title="S">
             {t("split")}
           </button>
+          <button onClick={() => commit(addMarker(project, frame))} title="M">
+            {t("marker")}
+          </button>
           <button onClick={quickText} title="T">
             {t("addText")}
           </button>
+          {playing && rate !== 1 && (
+            <span className="rate" dir="ltr">
+              {rate > 0 ? `${rate}×` : `◀ ${-rate}×`}
+            </span>
+          )}
         </div>
       </main>
 
@@ -421,6 +535,28 @@ export function App() {
               onDelete={() => deleteSelected(false)}
             />
           )}
+          {selShape && (
+            <ShapeProperties
+              shape={selShape}
+              fps={fpsValue(project.fps)}
+              swatches={brand.colors}
+              onChange={(ns) => commit({ ...project, shapes: (project.shapes ?? []).map((x) => (x.id === ns.id ? ns : x)) })}
+              onDelete={() => deleteSelected(false)}
+            />
+          )}
+          {selClip && picked.length > 0 && (
+            <div className="panel-body">
+              <p className="hint">
+                {picked.length + (picked.includes(selClip.id) ? 0 : 1)} {t("clipsPicked")}
+              </p>
+              <div className="chips">
+                <button onClick={groupPicked}>{t("groupClips")} (Ctrl+G)</button>
+                <button className="danger" onClick={() => deleteSelected(true)}>
+                  {t("deleteClips")}
+                </button>
+              </div>
+            </div>
+          )}
           {selClip && (
             <ClipProperties
               clip={selClip}
@@ -430,9 +566,36 @@ export function App() {
               onChange={(c) => commit(updateClip(project, c))}
               onRipple={() => deleteSelected(true)}
               onLift={() => deleteSelected(false)}
+              actions={
+                <>
+                  <button onClick={() => commit(duplicate(project, selClip.id))} title="Ctrl+D">
+                    {t("duplicate")}
+                  </button>
+                  <button onClick={() => setClipboard(selClip)} title="Ctrl+C">
+                    {t("copy")}
+                  </button>
+                  {selClip.media === "video" && (
+                    <button onClick={() => commit(freezeFrame(project, selClip.id, frame))} title="F" disabled={frame < selClip.start || frame >= selClip.start + selClip.duration}>
+                      {t("freezeFrame")}
+                    </button>
+                  )}
+                  {selClip.media === "video" && selClip.volume > 0 && !selClip.freeze && (
+                    <button onClick={() => commit(detachAudio(project, selClip.id))}>{t("detachAudio")}</button>
+                  )}
+                  {selClip.media === "compound" && (
+                    <button onClick={() => commit(ungroup(project, selClip.id))} title="Ctrl+Shift+G">
+                      {t("ungroup")}
+                    </button>
+                  )}
+                  {(() => {
+                    const tr = project.tracks.find((x) => x.clips.some((c) => c.id === selClip.id));
+                    return tr && <button onClick={() => commit(closeGaps(project, tr.id))}>{t("closeGaps")}</button>;
+                  })()}
+                </>
+              }
             />
           )}
-          {!selText && !selClip && (
+          {!selText && !selClip && !selShape && (
             <div className="panel-body">
               <p className="hint">{total === 0 ? t("emptyHint") : t("selectHint")}</p>
               <p className="hint small">{t("shortcutsHint")}</p>
@@ -442,9 +605,10 @@ export function App() {
       </aside>
 
       <section className="timeline-area">
-        <Timeline project={project} frame={frame} selected={selected} onSeek={setFrame} onSelect={setSelected} onCommit={commit} />
+        <Timeline project={project} frame={frame} selected={selected} onSeek={setFrame} onSelect={setSelected} onCommit={commit} picked={picked} onPick={setPicked} />
       </section>
 
+      {publishing && <PublishDialog project={project} onClose={() => setPublishing(false)} />}
       {exporting && <ExportDialog project={project} onClose={() => setExporting(false)} onLoudness={(v) => commit({ ...project, loudness: v })} />}
       {templateName !== null && (
         <div className="modal-back">

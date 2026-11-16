@@ -1,5 +1,6 @@
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { CutoutSection, MaskSection, applyRamp, rampKind } from "./ProPanels";
+import { CurvesEditor, FrameSection, TimeSection, WheelsSection, usesCurves, usesWheels } from "./Phase5Clip";
 import { label as pluginLabel, usePlugins } from "./plugins";
 import { useT, type TKey } from "./i18n";
 import { movePreset, setTransformAt, speedOf, transformAt, type MovePreset } from "./motion";
@@ -22,7 +23,7 @@ export const LOOKS: Record<string, Adjust> = {
 const BASIC = ["brightness", "contrast", "saturation", "temperature"] as const;
 const sameAdjust = (a: Adjust, b: Adjust) => BASIC.every((k) => Math.abs(a[k] - b[k]) < 1e-3);
 
-function AnimPicker(props: { label: string; value?: TextAnim | null; fps: number; onChange: (a: TextAnim | null) => void }) {
+export function AnimPicker(props: { label: string; value?: TextAnim | null; fps: number; onChange: (a: TextAnim | null) => void; kinds?: TextAnimKind[] }) {
   const t = useT();
   const kind = props.value?.kind ?? "none";
   const frames = props.value?.frames ?? Math.round(props.fps * 0.5);
@@ -30,7 +31,7 @@ function AnimPicker(props: { label: string; value?: TextAnim | null; fps: number
     <div className="anim-picker">
       <span className="label">{props.label}</span>
       <div className="chips">
-        {ANIMS.map((k) => (
+        {(props.kinds ?? ANIMS).map((k) => (
           <button key={k} className={kind === k ? "on" : ""} onClick={() => props.onChange(k === "none" ? null : { kind: k, frames: k === "words" && kind !== "words" ? Math.round(props.fps * 1.2) : frames })}>
             {t(`anim_${k}` as TKey)}
           </button>
@@ -43,8 +44,8 @@ function AnimPicker(props: { label: string; value?: TextAnim | null; fps: number
   );
 }
 
-const hex = (c: number[]) => "#" + c.slice(0, 3).map((v) => v.toString(16).padStart(2, "0")).join("");
-const fromHex = (s: string, a = 255): Rgba => [
+export const hex = (c: number[]) => "#" + c.slice(0, 3).map((v) => v.toString(16).padStart(2, "0")).join("");
+export const fromHex = (s: string, a = 255): Rgba => [
   parseInt(s.slice(1, 3), 16),
   parseInt(s.slice(3, 5), 16),
   parseInt(s.slice(5, 7), 16),
@@ -147,7 +148,7 @@ export function TextProperties(props: { layer: TextLayer; fonts: FontInfo[]; swa
   );
 }
 
-function Section(props: { title: string; open?: boolean; badge?: boolean; children: React.ReactNode }) {
+export function Section(props: { title: string; open?: boolean; badge?: boolean; children: React.ReactNode }) {
   return (
     <details className="section" open={props.open}>
       <summary>
@@ -168,6 +169,8 @@ export function ClipProperties(props: {
   onChange: (c: Clip) => void;
   onRipple: () => void;
   onLift: () => void;
+  /** More buttons (duplicate, freeze frame, detach sound, ungroup…). */
+  actions?: React.ReactNode;
 }) {
   const t = useT();
   const { clip, fps, frame } = props;
@@ -226,7 +229,7 @@ export function ClipProperties(props: {
           </label>
         </Section>
       )}
-      {clip.media !== "image" && (
+      {clip.media !== "image" && clip.media !== "compound" && (
         <Section title={t("secSpeed")} open={ramped} badge={ramped || Math.abs(speed - 1) > 1e-3}>
           <span className="label">{t("speed")}</span>
           <div className="chips">
@@ -316,13 +319,35 @@ export function ClipProperties(props: {
             {adjust.lut && <Slider label={t("lutStrength")} min={0} max={1} step={0.01} value={adjust.lut_strength ?? 1} onChange={(v) => setA({ lut_strength: v })} format={pct} />}
           </Section>
 
-          <Section title={t("secCutout")} badge={!!clip.remove_bg || !!clip.chroma}>
-            <CutoutSection clip={clip} onChange={props.onChange} />
+          <Section title={t("secFrame")} badge={!!(tr.rotation || clip.flip_h || clip.flip_v || clip.crop || clip.blend)}>
+            <FrameSection clip={clip} frame={frame} onChange={props.onChange} />
           </Section>
 
-          <Section title={t("secMask")} badge={!!clip.mask}>
-            <MaskSection clip={clip} frame={frame} onChange={props.onChange} />
+          <Section title={t("curves")} badge={usesCurves(adjust)}>
+            <CurvesEditor curves={adjust.curves ?? {}} onChange={(c) => setA({ curves: c })} />
           </Section>
+
+          <Section title={t("wheels")} badge={usesWheels(adjust)}>
+            <WheelsSection adjust={adjust} onChange={setA} />
+          </Section>
+
+          {clip.media === "video" && (
+            <Section title={t("secTime")} badge={!!clip.reverse || !!clip.freeze || (clip.stabilize ?? 0) > 0}>
+              <TimeSection clip={clip} fps={fps} onChange={props.onChange} />
+            </Section>
+          )}
+
+          {clip.media !== "compound" && (
+            <>
+              <Section title={t("secCutout")} badge={!!clip.remove_bg || !!clip.chroma}>
+                <CutoutSection clip={clip} onChange={props.onChange} />
+              </Section>
+
+              <Section title={t("secMask")} badge={!!clip.mask}>
+                <MaskSection clip={clip} frame={frame} onChange={props.onChange} />
+              </Section>
+            </>
+          )}
 
           {props.hasBefore && (
             <Section title={t("transitionIn")} badge={trKind !== "none"}>
@@ -346,6 +371,7 @@ export function ClipProperties(props: {
           <input type="number" min={0.1} step={0.1} value={secs(clip.duration)} onChange={(e) => set({ duration: Math.max(1, Math.round(+e.target.value * fps)) })} />
         </label>
       )}
+      {props.actions && <div className="chips actions">{props.actions}</div>}
       <div className="row">
         <button className="danger" onClick={props.onRipple}>
           {t("deleteClip")}

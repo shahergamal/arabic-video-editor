@@ -1,0 +1,40 @@
+{
+  "note": "Only fonts under an open license (OFL / Apache) are bundled. Every font keeps its license file next to it.",
+  "fonts": [
+    {
+      "id": "ibm-plex-sans-arabic",
+      "family": "IBM Plex Sans Arabic",
+      "category": "modern",
+      "license": "OFL-1.1",
+      "commercial_use": true,
+      "files": [
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/ibmplexsansarabic/IBMPlexSansArabic-Regular.ttf",
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/ibmplexsansarabic/IBMPlexSansArabic-Bold.ttf"
+      ],
+      "license_file": "https://raw.githubusercontent.com/google/fonts/main/ofl/ibmplexsansarabic/OFL.txt"
+    },
+    {
+      "id": "cairo",
+      "family": "Cairo",
+      "category": "modern",
+      "license": "OFL-1.1",
+      "commercial_use": true,
+      "files": [
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/cairo/Cairo%5Bslnt%2Cwght%5D.ttf"
+      ],
+      "license_file": "https://raw.githubusercontent.com/google/fonts/main/ofl/cairo/OFL.txt"
+    },
+    {
+      "id": "amiri",
+      "family": "Amiri",
+      "category": "naskh",
+      "license": "OFL-1.1",
+      "commercial_use": true,
+      "files": [
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/amiri/Amiri-Regular.ttf",
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/amiri/Amiri-Bold.ttf"
+      ],
+      "license_file": "https://raw.githubusercontent.com/google/fonts/main/ofl/amiri/OFL.txt"
+    }
+  ]
+}

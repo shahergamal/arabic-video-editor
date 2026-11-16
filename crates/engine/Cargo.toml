@@ -11,6 +11,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 png = "0.17"
+tract-onnx = "0.23"
+roxmltree = "0.20"
+rustfft = "6"
 
 [dev-dependencies]
 tempfile = "3"

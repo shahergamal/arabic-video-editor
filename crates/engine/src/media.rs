@@ -36,6 +36,8 @@ pub struct MediaInfo {
     pub duration: f64,
     pub fps: Option<Fps>,
     pub has_audio: bool,
+    /// "pq" (HDR10, Dolby Vision base layer) or "hlg" for HDR video.
+    pub hdr: Option<String>,
 }
 
 pub fn probe(path: &Path) -> Result<MediaInfo> {
@@ -55,6 +57,11 @@ pub fn probe(path: &Path) -> Result<MediaInfo> {
         .as_str()
         .and_then(|s| s.parse().ok())
         .unwrap_or(0.0);
+    let hdr = video.and_then(|s| match s["color_transfer"].as_str() {
+        Some("smpte2084") => Some("pq".to_string()),
+        Some("arib-std-b67") => Some("hlg".to_string()),
+        _ => None,
+    });
     let (width, height, fps) = match video {
         Some(s) => {
             let (mut w, mut h) = (s["width"].as_u64().unwrap_or(0) as u32, s["height"].as_u64().unwrap_or(0) as u32);
@@ -71,7 +78,52 @@ pub fn probe(path: &Path) -> Result<MediaInfo> {
         }
         None => (0, 0, None),
     };
-    Ok(MediaInfo { width, height, duration, fps, has_audio })
+    Ok(MediaInfo { width, height, duration, fps, has_audio, hdr })
+}
+
+/// Whether this ffmpeg can tone-map (needs the zimg library).
+fn can_tonemap() -> bool {
+    static CAN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *CAN.get_or_init(|| {
+        command(ffmpeg_path())
+            .args(["-hide_banner", "-filters"])
+            .output()
+            .map(|o| {
+                let t = String::from_utf8_lossy(&o.stdout);
+                t.contains(" zscale ") && t.contains(" tonemap ")
+            })
+            .unwrap_or(false)
+    })
+}
+
+/// Whether a file is HDR, remembered per file so seeking stays quick.
+fn hdr_of(path: &Path) -> Option<String> {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    static SEEN: std::sync::OnceLock<Mutex<HashMap<PathBuf, Option<String>>>> = std::sync::OnceLock::new();
+    let seen = SEEN.get_or_init(Default::default);
+    if let Some(v) = seen.lock().unwrap().get(path) {
+        return v.clone();
+    }
+    let v = probe(path).ok().and_then(|i| i.hdr);
+    seen.lock().unwrap().insert(path.to_path_buf(), v.clone());
+    v
+}
+
+/// Filters that bring an HDR picture into normal (SDR, BT.709) colours, so
+/// it does not look grey and washed out. Highlights roll off smoothly
+/// (Hable curve). Empty for normal video, or when ffmpeg cannot do it.
+pub fn tonemap_filter(path: &Path) -> String {
+    let Some(kind) = hdr_of(path) else { return String::new() };
+    if !can_tonemap() {
+        return String::new();
+    }
+    // HLG is scene-referred; its nominal peak is lower than PQ's.
+    let npl = if kind == "hlg" { 400 } else { 100 };
+    format!(
+        "zscale=t=linear:npl={npl},format=gbrpf32le,zscale=p=bt709,tonemap=hable:desat=0,\
+         zscale=t=bt709:m=bt709:r=tv,format=yuv420p,"
+    )
 }
 
 fn parse_rate(s: &str) -> Option<Fps> {
@@ -92,12 +144,15 @@ pub struct FrameReader {
 
 impl FrameReader {
     pub fn open(path: &Path, start_seconds: f64, width: u32, height: u32, fps: Fps) -> Result<Self> {
-        // Fit the picture inside the frame and fill the rest with black.
-        let filter = format!(
-            "fps={fps},scale={width}:{height}:force_original_aspect_ratio=decrease:flags=bicubic,\
-             pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black,format=rgba",
-            fps = fps.as_ffmpeg()
-        );
+        Self::open_at_speed(path, start_seconds, width, height, fps, 1.0)
+    }
+
+    /// Like `open`, playing the file `speed` times faster (0.5 = slow motion).
+    pub fn open_at_speed(path: &Path, start_seconds: f64, width: u32, height: u32, fps: Fps, speed: f32) -> Result<Self> {
+        // Fit the picture inside the frame; the rest stays see-through so
+        // tracks underneath show (black shows if there is nothing below).
+        let retime = if (speed - 1.0).abs() > 1e-4 { format!("setpts=PTS/{speed:.6},") } else { String::new() };
+        let filter = format!("{}{retime}fps={fps},{}", tonemap_filter(path), fit_filter(width, height), fps = fps.as_ffmpeg());
         let mut child = command(ffmpeg_path())
             .args(["-v", "error", "-nostdin"])
             .args(["-ss", &format!("{start_seconds:.6}")])
@@ -127,9 +182,126 @@ impl FrameReader {
     }
 }
 
+fn fit_filter(width: u32, height: u32) -> String {
+    format!(
+        "scale={width}:{height}:force_original_aspect_ratio=decrease:flags=bicubic,format=rgba,\
+         pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black@0"
+    )
+}
+
+/// Reads a still image (PNG, JPEG, WebP...) fitted to the frame.
+pub fn read_still(path: &Path, width: u32, height: u32) -> Result<Frame> {
+    let out = command(ffmpeg_path())
+        .args(["-v", "error", "-nostdin", "-i"])
+        .arg(path)
+        .args(["-frames:v", "1", "-vf", &fit_filter(width, height), "-f", "rawvideo", "-pix_fmt", "rgba", "-"])
+        .output()
+        .map_err(Error::FfmpegMissing)?;
+    if !out.status.success() || out.stdout.len() != Frame::byte_len(width, height) {
+        return Err(Error::Ffmpeg(String::from_utf8_lossy(&out.stderr).into_owned()));
+    }
+    Ok(Frame { width, height, data: out.stdout })
+}
+
+/// Sound level of a file over time, as `buckets` peaks between 0 and 1,
+/// for drawing the waveform on the timeline.
+pub fn waveform(path: &Path, buckets: usize) -> Result<Vec<f32>> {
+    let out = command(ffmpeg_path())
+        .args(["-v", "error", "-nostdin", "-i"])
+        .arg(path)
+        .args(["-vn", "-ac", "1", "-ar", "4000", "-f", "f32le", "-"])
+        .output()
+        .map_err(Error::FfmpegMissing)?;
+    if !out.status.success() {
+        return Err(Error::Ffmpeg(String::from_utf8_lossy(&out.stderr).into_owned()));
+    }
+    let samples: Vec<f32> = out.stdout.chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
+    if samples.is_empty() || buckets == 0 {
+        return Ok(vec![]);
+    }
+    let per = samples.len().div_ceil(buckets);
+    Ok(samples.chunks(per).map(|c| c.iter().fold(0f32, |m, v| m.max(v.abs())).min(1.0)).collect())
+}
+
+/// A small JPEG picture of the file, for the media library.
+pub fn thumbnail(path: &Path, width: u32) -> Result<Vec<u8>> {
+    let info = probe(path)?;
+    let at = if info.duration > 2.0 { info.duration * 0.1 } else { 0.0 };
+    let out = command(ffmpeg_path())
+        .args(["-v", "error", "-nostdin", "-ss", &format!("{at:.3}"), "-i"])
+        .arg(path)
+        .args(["-frames:v", "1", "-vf", &format!("{}scale={width}:-2", tonemap_filter(path)), "-f", "image2", "-c:v", "mjpeg", "-q:v", "5", "-"])
+        .output()
+        .map_err(Error::FfmpegMissing)?;
+    if !out.status.success() || out.stdout.is_empty() {
+        return Err(Error::Ffmpeg(String::from_utf8_lossy(&out.stderr).into_owned()));
+    }
+    Ok(out.stdout)
+}
+
 impl Drop for FrameReader {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
+}
+
+/// Whether a video is big enough that editing is smoother with a proxy.
+pub fn wants_proxy(info: &MediaInfo) -> bool {
+    // HDR too: tone-mapping every frame is slow, the copy is already converted.
+    info.width.max(info.height) > 1920 || info.width.min(info.height) > 1080 || info.hdr.is_some()
+}
+
+/// Makes a small, quick-to-seek copy of a video for smooth preview: the
+/// short side at 540 pixels, a key frame every 10 frames, no sound. Written
+/// under a temporary name and renamed when complete.
+pub fn make_proxy(src: &Path, out: &Path) -> Result<()> {
+    let tonemap = tonemap_filter(src);
+    let tmp = out.with_extension("part.mp4");
+    let res = command(ffmpeg_path())
+        .args(["-v", "error", "-y", "-nostdin", "-i"])
+        .arg(src)
+        .args(["-map", "0:v:0", "-an", "-vf", &format!("{tonemap}scale='if(gt(iw,ih),-2,540)':'if(gt(iw,ih),540,-2)'")])
+        // An HDR copy is already normal colour; say so, so it is not converted twice.
+        .args(if tonemap.is_empty() { &[][..] } else { &["-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709"][..] })
+        .args(["-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-g", "10", "-pix_fmt", "yuv420p"])
+        .arg(&tmp)
+        .output()
+        .map_err(Error::FfmpegMissing)?;
+    if !res.status.success() {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(Error::Ffmpeg(String::from_utf8_lossy(&res.stderr).into()));
+    }
+    std::fs::rename(&tmp, out)?;
+    Ok(())
+}
+
+/// Quiet stretches in a file's sound, as (start, end) in seconds: where the
+/// level stays below `threshold_db` for at least `min_seconds`.
+pub fn silences(path: &Path, threshold_db: f32, min_seconds: f32) -> Result<Vec<(f64, f64)>> {
+    let out = command(ffmpeg_path())
+        .args(["-hide_banner", "-nostats", "-nostdin", "-i"])
+        .arg(path)
+        .args(["-vn", "-af", &format!("silencedetect=noise={threshold_db}dB:d={min_seconds}"), "-f", "null", "-"])
+        .output()
+        .map_err(Error::FfmpegMissing)?;
+    let text = String::from_utf8_lossy(&out.stderr);
+    let mut spans = vec![];
+    let mut open: Option<f64> = None;
+    for line in text.lines() {
+        let num = |key: &str| line.split(key).nth(1).and_then(|r| r.split_whitespace().next()).and_then(|v| v.parse::<f64>().ok());
+        if let Some(s) = num("silence_start: ") {
+            open = Some(s.max(0.0));
+        } else if let (Some(e), Some(s)) = (num("silence_end: "), open) {
+            spans.push((s, e));
+            open = None;
+        }
+    }
+    if let Some(s) = open {
+        // Quiet until the end of the file.
+        if let Ok(info) = probe(path) {
+            spans.push((s, info.duration));
+        }
+    }
+    Ok(spans)
 }

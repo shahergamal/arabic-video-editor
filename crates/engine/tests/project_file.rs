@@ -15,8 +15,14 @@ fn sample() -> Project {
         y: 0.8,
         box_width: 0.9,
         shadow: true,
+        outline: 0.0,
+        outline_color: [0, 0, 0, 255],
+        background: [0, 0, 0, 0],
+        align: "center".into(),
         start: 0,
         duration: 90,
+        anim_in: None,
+        anim_out: None,
     });
     p
 }

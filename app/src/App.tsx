@@ -1,41 +1,65 @@
-import { useCallback, useEffect, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { api } from "./api";
+import { api, mediaInfo } from "./api";
+import { addTrack, appendMedia, liftDelete, makeClip, place, rippleDelete, splitAt, updateClip } from "./edits";
+import { BrandPanel, useBrand } from "./BrandPanel";
+import { ExportDialog } from "./ExportDialog";
+import { FontsPanel } from "./FontsPanel";
+import { registerFontFaces } from "./fontFaces";
 import { useHistory } from "./history";
-import { appendClip, rippleDelete, splitAt } from "./edits";
+import { Home } from "./Home";
+import { toggleLanguage, useT } from "./i18n";
+import { MediaPanel, toItems, type MediaItem } from "./MediaPanel";
 import { Preview } from "./Preview";
+import { CaptionsPanel } from "./CaptionsPanel";
+import { AssistantPanel } from "./AssistantPanel";
+import { Scopes } from "./Scopes";
+import { AngleButtons } from "./Phase4Panels";
+import { switchAngle } from "./multicam";
+import { ClipProperties, TextProperties } from "./Properties";
+import { TextPresets } from "./TextPresets";
 import { Timeline } from "./Timeline";
-import { TextPanel } from "./TextPanel";
-import type { Project, TextLayer } from "./types";
-import { FORMATS, fpsValue, newId, projectDuration } from "./types";
+import type { FontInfo, Project, TextLayer } from "./types";
+import { AUDIO_EXT, IMAGE_EXT, VIDEO_EXT, allClips, fileName, formatTime, fpsValue, newId, newProject, normalize, projectDuration } from "./types";
 
-const VIDEO_TYPES = ["mp4", "mov", "mkv", "webm", "m4v", "avi", "mts"];
+type Tab = "media" | "text" | "captions" | "fonts" | "assistant";
+const MEDIA_EXT = new Set([...VIDEO_EXT, ...IMAGE_EXT, ...AUDIO_EXT]);
 
 export function App() {
+  const t = useT();
   const { present: project, commit, reset, undo, redo } = useHistory<Project>(null);
+  const [path, setPath] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
   const [frame, setFrame] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
-  const [fonts, setFonts] = useState<string[]>([]);
-  const [recovered, setRecovered] = useState<Project | null>(null);
-  const [exporting, setExporting] = useState<{ done: number; total: number } | null>(null);
+  const [fonts, setFonts] = useState<FontInfo[]>([]);
+  const [media, setMedia] = useState<MediaItem[]>([]);
+  const [missing, setMissing] = useState<string[]>([]);
+  const [tab, setTab] = useState<Tab>("media");
+  const [exporting, setExporting] = useState(false);
+  const [showScopes, setShowScopes] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [brand, setBrand] = useBrand();
+  const [templateName, setTemplateName] = useState<string | null>(null);
+
+  const loadFonts = useCallback(() => {
+    api
+      .fonts()
+      .then((f) => {
+        setFonts(f);
+        registerFontFaces(f);
+      })
+      .catch(() => {});
+  }, []);
+  useEffect(loadFonts, [loadFonts]);
 
   useEffect(() => {
-    api.fonts().then(setFonts).catch(() => {});
-    api.recover().then((p) => p && p.clips.length + p.texts.length > 0 && setRecovered(p)).catch(() => {});
-    const un1 = listen<{ done: number; total: number }>("export-progress", (e) => setExporting(e.payload));
-    const un2 = listen<{ ok: boolean; message: string }>("export-finished", (e) => {
-      setExporting(null);
-      setNotice(e.payload.ok ? `تم التصدير: ${e.payload.message}` : `لم يكتمل التصدير: ${e.payload.message}`);
-    });
-    return () => {
-      un1.then((f) => f());
-      un2.then((f) => f());
-    };
-  }, []);
+    if (!notice) return;
+    const id = setTimeout(() => setNotice(null), 5000);
+    return () => clearTimeout(id);
+  }, [notice]);
 
   // Every change goes to the engine (and its autosave) before the preview redraws.
   useEffect(() => {
@@ -43,31 +67,89 @@ export function App() {
     api
       .update(project)
       .then(() => setRevision((r) => r + 1))
-      .catch((e) => setNotice(`تعذّر الحفظ التلقائي: ${e}`));
+      .catch((e) => setNotice(`${t("autosaveFailed")}: ${e}`));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project]);
 
-  const importVideo = useCallback(async () => {
-    if (!project) return;
-    const picked = await openDialog({ multiple: true, filters: [{ name: "فيديو", extensions: VIDEO_TYPES }] });
-    if (!picked) return;
-    let next = project;
-    for (const path of Array.isArray(picked) ? picked : [picked]) {
-      try {
-        const info = await api.probe(path);
-        next = appendClip(next, path, info.duration);
-      } catch (e) {
-        setNotice(`لم نتمكن من فتح الملف: ${e}`);
-      }
-    }
-    commit(next);
-  }, [project, commit]);
+  const start = useCallback(
+    (p: Project, at: string | null) => {
+      const n = normalize(p);
+      reset(n);
+      setPath(at);
+      setFrame(0);
+      setSelected(null);
+      setMedia(toItems([...new Set(allClips(n).map((c) => c.source))]));
+      api.missing(n).then(setMissing).catch(() => setMissing([]));
+    },
+    [reset],
+  );
 
-  const addText = useCallback(() => {
-    if (!project) return;
-    const layer: TextLayer = {
-      id: newId(),
+  const openPath = useCallback(
+    (p: string) =>
+      api
+        .open(p)
+        .then((proj) => start(proj, p))
+        .catch((e) => setNotice(`${t("openFailed")}: ${e}`)),
+    [start, t],
+  );
+
+  const importPaths = useCallback((paths: string[]) => {
+    const ok = paths.filter((p) => MEDIA_EXT.has(p.split(".").pop()?.toLowerCase() ?? ""));
+    setMedia((m) => [...m, ...toItems(ok.filter((p) => !m.some((x) => x.path === p)))]);
+  }, []);
+
+  const addMedia = useCallback(
+    async (item: MediaItem) => {
+      if (!project) return;
+      try {
+        const seconds = item.kind === "image" ? 5 : (await mediaInfo(item.path)).duration;
+        commit(appendMedia(project, item.path, item.kind, seconds));
+      } catch (e) {
+        setNotice(`${t("openFailed")}: ${fileName(item.path)} (${e})`);
+      }
+    },
+    [project, commit, t],
+  );
+
+  // Files dropped on the window go to the media panel.
+  useEffect(() => {
+    const un = getCurrentWebview().onDragDropEvent((e) => {
+      if (e.payload.type === "drop") importPaths(e.payload.paths);
+    });
+    return () => {
+      un.then((f) => f());
+    };
+  }, [importPaths]);
+
+  const addText = useCallback(
+    (preset: Omit<TextLayer, "id" | "start" | "duration">) => {
+      if (!project) return;
+      const layer: TextLayer = { ...preset, id: newId(), start: frame, duration: Math.round(fpsValue(project.fps) * 3) };
+      commit({ ...project, texts: [...project.texts, layer] });
+      setSelected(layer.id);
+    },
+    [project, frame, commit],
+  );
+
+  const addLogo = useCallback(
+    (path: string) => {
+      if (!project) return;
+      const withTrack = addTrack(project, "video");
+      const top = withTrack.tracks.filter((tr) => tr.kind === "video").pop()!;
+      const fps = fpsValue(project.fps);
+      const clip = makeClip(withTrack, path, "image", Math.max(3, projectDuration(project) / fps), 0);
+      commit(place(withTrack, top.id, { ...clip, transform: { scale: 0.18, x: 0.36, y: -0.4, opacity: 1 } }));
+      setSelected(clip.id);
+    },
+    [project, commit],
+  );
+
+  const families = useMemo(() => fonts.filter((f) => f.origin !== "system").map((f) => f.family), [fonts]);
+  const quickText = useCallback(() => {
+    const family = [brand.font ?? "", "Cairo", "IBM Plex Sans Arabic"].find((f) => families.includes(f)) ?? families[0] ?? "Cairo";
+    addText({
       text: "اكتب هنا",
-      font_family: fonts.includes("Cairo") ? "Cairo" : fonts[0] ?? "IBM Plex Sans Arabic",
+      font_family: family,
       size: 0.06,
       weight: 700,
       color: [255, 255, 255, 255],
@@ -75,207 +157,326 @@ export function App() {
       y: 0.8,
       box_width: 0.9,
       shadow: true,
-      start: frame,
-      duration: Math.round(fpsValue(project.fps) * 3),
-    };
-    commit({ ...project, texts: [...project.texts, layer] });
-    setSelected(layer.id);
-  }, [project, fonts, frame, commit]);
-
-  const doExport = useCallback(async () => {
-    if (!project || projectDuration(project) === 0) return;
-    const path = await saveDialog({ defaultPath: `${project.name}.mp4`, filters: [{ name: "MP4", extensions: ["mp4"] }] });
-    if (!path) return;
-    setPlaying(false);
-    setExporting({ done: 0, total: projectDuration(project) });
-    api.startExport(path).catch((e) => {
-      setExporting(null);
-      setNotice(String(e));
+      outline: 0,
+      outline_color: [0, 0, 0, 255],
+      background: [0, 0, 0, 0],
+      align: "center",
     });
-  }, [project]);
+  }, [addText, families, brand.font]);
 
-  const saveProject = useCallback(async () => {
+  const saveProject = useCallback(
+    async (as = false) => {
+      if (!project) return;
+      let target = as ? null : path;
+      if (!target) {
+        target = await saveDialog({
+          defaultPath: `${project.name || t("untitled")}.ave`,
+          filters: [{ name: "AVE", extensions: ["ave"] }],
+        });
+      }
+      if (!target) return;
+      await api
+        .save(project, target)
+        .then(() => {
+          setPath(target);
+          setNotice(t("saved"));
+        })
+        .catch((e) => setNotice(String(e)));
+    },
+    [project, path, t],
+  );
+
+  const relink = useCallback(async () => {
     if (!project) return;
-    const path = await saveDialog({ defaultPath: `${project.name}.ave`, filters: [{ name: "مشروع", extensions: ["ave"] }] });
-    if (path) await api.save(project, path).then(() => setNotice("تم حفظ المشروع"));
-  }, [project]);
+    let next = project;
+    for (const old of missing) {
+      const picked = await openDialog({ title: fileName(old), filters: [{ name: fileName(old), extensions: [...MEDIA_EXT] }] });
+      if (typeof picked !== "string") continue;
+      next = { ...next, tracks: next.tracks.map((tr) => ({ ...tr, clips: tr.clips.map((c) => (c.source === old ? { ...c, source: picked } : c)) })) };
+    }
+    commit(next);
+    api.missing(next).then(setMissing);
+    setMedia(toItems([...new Set(allClips(next).map((c) => c.source))]));
+  }, [project, missing, commit]);
 
-  const openProject = useCallback(async () => {
-    const path = await openDialog({ filters: [{ name: "مشروع", extensions: ["ave"] }] });
-    if (typeof path === "string") reset(await api.open(path));
-  }, [reset]);
+  const selText = project?.texts.find((x) => x.id === selected) ?? null;
+  const selClip = project ? allClips(project).find((c) => c.id === selected) ?? null : null;
+
+  const deleteSelected = useCallback(
+    (ripple: boolean) => {
+      if (!project || !selected) return;
+      if (selText) commit({ ...project, texts: project.texts.filter((x) => x.id !== selected) });
+      else commit(ripple ? rippleDelete(project, selected) : liftDelete(project, selected));
+      setSelected(null);
+    },
+    [project, selected, selText, commit],
+  );
 
   // Keyboard shortcuts.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const typing = (e.target as HTMLElement).closest("input, textarea, select");
-      if (typing || !project) return;
+      if (typing || !project || exporting) return;
       const mod = e.ctrlKey || e.metaKey;
+      const end = projectDuration(project);
+      const step = e.shiftKey ? Math.round(fpsValue(project.fps)) : 1;
       if (e.code === "Space") {
         e.preventDefault();
         setPlaying((p) => !p);
+      } else if (mod && (e.code === "KeyY" || (e.code === "KeyZ" && e.shiftKey))) {
+        e.preventDefault();
+        redo();
       } else if (mod && e.code === "KeyZ") {
         e.preventDefault();
-        e.shiftKey ? redo() : undo();
+        undo();
       } else if (mod && e.code === "KeyS") {
         e.preventDefault();
-        saveProject();
-      } else if (e.code === "KeyS") {
-        commit(splitAt(project, frame));
-      } else if ((e.code === "Delete" || e.code === "Backspace") && selected) {
-        if (project.clips.some((c) => c.id === selected)) commit(rippleDelete(project, selected));
-        else commit({ ...project, texts: project.texts.filter((t) => t.id !== selected) });
+        saveProject(e.shiftKey);
+      } else if (mod && e.code === "KeyE") {
+        e.preventDefault();
+        setPlaying(false);
+        setExporting(true);
+      } else if (e.code === "KeyS" || (mod && e.code === "KeyB")) {
+        commit(splitAt(project, frame, selClip?.id));
+      } else if (e.code === "KeyT" && !mod) {
+        quickText();
+      } else if (e.code === "Delete" || e.code === "Backspace") {
+        deleteSelected(!e.shiftKey);
+      } else if (e.code === "ArrowLeft" || e.code === "ArrowRight") {
+        e.preventDefault();
+        // The timeline always runs left to right, like a clock, in both languages.
+        const forward = e.code === "ArrowRight";
+        setFrame((f) => Math.max(0, Math.min(end, f + (forward ? step : -step))));
+      } else if (e.code === "Home") {
+        setFrame(0);
+      } else if (e.code === "End") {
+        setFrame(end);
+      } else if (e.code === "Escape") {
         setSelected(null);
-      } else if (e.code === "ArrowRight" || e.code === "ArrowLeft") {
-        const step = e.shiftKey ? Math.round(fpsValue(project.fps)) : 1;
-        setFrame((f) => Math.max(0, f + (e.code === "ArrowRight" ? step : -step)));
+      } else if (!mod && /^Digit[1-9]$/.test(e.code) && project.angles?.length) {
+        // Live multi-camera cutting: the number picks the camera.
+        commit(switchAngle(project, frame, +e.code.slice(5) - 1));
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [project, frame, selected, commit, undo, redo, saveProject]);
+  }, [project, frame, selClip, exporting, commit, undo, redo, saveProject, deleteSelected, quickText]);
 
   if (!project) {
     return (
-      <StartScreen
-        recovered={recovered}
-        onRecover={() => recovered && reset(recovered)}
-        onOpen={openProject}
-        onNew={(w, h, label) => reset({ version: 1, name: `مشروع ${label}`, width: w, height: h, fps: { num: 30, den: 1 }, clips: [], texts: [] })}
-      />
+      <>
+        <Home
+          onNew={(w, h) => start(newProject(t("untitled"), w, h), null)}
+          onOpen={openPath}
+          onImport={(p) =>
+            api
+              .importTimeline(p)
+              .then((proj) => start(proj, null))
+              .catch((e) => setNotice(`${t("openFailed")}: ${e}`))
+          }
+          onRecover={(p) => start(p, null)}
+          onTemplate={(p) => start({ ...p, name: t("untitled") }, null)}
+        />
+        {notice && <div className="toast">{notice}</div>}
+      </>
     );
   }
 
-  const text = project.texts.find((t) => t.id === selected);
-  const clip = project.clips.find((c) => c.id === selected);
-
+  const total = projectDuration(project);
   return (
     <div className="app">
       <header className="topbar">
-        <div className="brand">محرر الفيديو</div>
-        <input className="project-name" value={project.name} onChange={(e) => commit({ ...project, name: e.target.value })} />
+        <button
+          onClick={() => {
+            setPlaying(false);
+            reset(null);
+          }}
+        >
+          {t("home")}
+        </button>
+        <input
+          className="project-name"
+          dir="auto"
+          aria-label={t("projectNameLabel")}
+          value={project.name}
+          onChange={(e) => commit({ ...project, name: e.target.value })}
+        />
+        <span className="muted" dir="ltr">
+          {project.width}×{project.height}
+        </span>
         <div className="spacer" />
-        <button onClick={undo} title="تراجع (Ctrl+Z)">تراجع</button>
-        <button onClick={redo} title="إعادة (Ctrl+Shift+Z)">إعادة</button>
-        <button onClick={saveProject} title="حفظ (Ctrl+S)">حفظ</button>
-        <button className="primary" onClick={doExport} disabled={!!exporting || projectDuration(project) === 0}>
-          تصدير
+        <button onClick={undo} title="Ctrl+Z">
+          {t("undo")}
+        </button>
+        <button onClick={redo} title="Ctrl+Shift+Z">
+          {t("redo")}
+        </button>
+        <button onClick={() => saveProject()} title="Ctrl+S">
+          {t("save")}
+        </button>
+        <button onClick={() => setTemplateName(project.name)}>{t("saveTemplate")}</button>
+        <button onClick={toggleLanguage}>{t("language")}</button>
+        <button
+          className="primary"
+          disabled={total === 0}
+          title="Ctrl+E"
+          onClick={() => {
+            setPlaying(false);
+            setExporting(true);
+          }}
+        >
+          {t("export")}
         </button>
       </header>
 
-      <main className="workspace">
-        <section className="panel media">
-          <h2>الوسائط</h2>
-          <div className="panel-body">
-            <button className="wide" onClick={importVideo}>+ استيراد فيديو</button>
-            {project.clips.length === 0 && <p className="hint">ابدأ باستيراد فيديو. الملف الأصلي لا يتغير أبداً.</p>}
-            <ul className="media-list">
-              {[...new Set(project.clips.map((c) => c.source))].map((s) => (
-                <li key={s} dir="auto" title={s}>{s.split(/[\\/]/).pop()}</li>
-              ))}
-            </ul>
-          </div>
-        </section>
+      {missing.length > 0 && (
+        <div className="banner warn">
+          <span>
+            {t("missing")}: {missing.map(fileName).join("، ")}
+          </span>
+          <button onClick={relink}>{t("relink")}</button>
+        </div>
+      )}
 
-        <section className="stage">
-          <Preview
-            project={project}
-            revision={revision}
-            frame={frame}
-            playing={playing}
-            onFrame={setFrame}
-            onStop={() => setPlaying(false)}
-          />
-          <div className="transport">
-            <button onClick={() => setFrame(0)} title="إلى البداية">⏮</button>
-            <button className="play" onClick={() => setPlaying((p) => !p)} title="تشغيل / إيقاف (مسافة)">
-              {playing ? "❚❚" : "▶"}
+      <aside className="side left">
+        <nav className="tabs" role="tablist">
+          {(["media", "text", "captions", "fonts", "assistant"] as const).map((k) => (
+            <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>
+              {t(k)}
             </button>
-            <button onClick={() => commit(splitAt(project, frame))} title="قص عند المؤشر (S)">قص</button>
-            <button onClick={addText} title="نص جديد عند المؤشر">+ نص</button>
-          </div>
-        </section>
-
-        <section className="panel props">
-          <h2>الخصائص</h2>
-          {text ? (
-            <TextPanel
-              layer={text}
-              fonts={fonts}
-              fps={fpsValue(project.fps)}
-              onChange={(t) => commit({ ...project, texts: project.texts.map((x) => (x.id === t.id ? t : x)) })}
-              onDelete={() => {
-                commit({ ...project, texts: project.texts.filter((x) => x.id !== text.id) });
-                setSelected(null);
-              }}
-            />
-          ) : clip ? (
-            <div className="panel-body">
-              <p dir="auto" className="filename">{clip.source.split(/[\\/]/).pop()}</p>
-              <label>
-                مستوى الصوت
-                <input
-                  type="range" min={0} max={2} step={0.05} value={clip.volume}
-                  onChange={(e) => commit({ ...project, clips: project.clips.map((c) => (c.id === clip.id ? { ...c, volume: +e.target.value } : c)) })}
-                />
-              </label>
-              <button className="danger" onClick={() => { commit(rippleDelete(project, clip.id)); setSelected(null); }}>
-                حذف المقطع وسحب الفراغ
-              </button>
-            </div>
-          ) : (
-            <p className="hint panel-body">اختر مقطعاً أو نصاً من الخط الزمني لتعديله.</p>
+          ))}
+        </nav>
+        <div className="side-scroll">
+          {tab === "media" && <MediaPanel items={media} onImport={importPaths} onAdd={addMedia} />}
+          {tab === "text" && (
+            <>
+              <TextPresets families={families} brandFont={brand.font} onAdd={addText} />
+              <BrandPanel brand={brand} families={families} onChange={setBrand} onAddLogo={addLogo} />
+            </>
           )}
-        </section>
+          {tab === "assistant" && (
+            <AssistantPanel project={project} selected={selClip} missing={missing} brand={brand} families={families} onCommit={commit} onJump={setFrame} media={media} frame={frame} />
+          )}
+          {tab === "captions" && <CaptionsPanel project={project} families={families} onAdd={commit} />}
+          {tab === "fonts" && (
+            <FontsPanel
+              fonts={fonts}
+              current={selText?.font_family}
+              onUse={selText ? (family) => commit({ ...project, texts: project.texts.map((x) => (x.id === selText.id ? { ...x, font_family: family } : x)) }) : undefined}
+              onAddFont={(p) =>
+                api
+                  .addFont(p)
+                  .then(loadFonts)
+                  .catch((e) => setNotice(String(e)))
+              }
+            />
+          )}
+        </div>
+      </aside>
+
+      <main className="stage">
+        <Preview
+          project={project}
+          revision={revision}
+          frame={frame}
+          playing={playing}
+          onFrame={setFrame}
+          onStop={() => setPlaying(false)}
+        />
+        {showScopes && <Scopes frame={frame} revision={revision} playing={playing} />}
+        <div className="transport">
+          <button onClick={() => setFrame(0)} title="Home">
+            {t("toStart")}
+          </button>
+          <button className="play" onClick={() => setPlaying((p) => !p)} disabled={total === 0} title={t("playPause")} aria-label={t("playPause")}>
+            {playing ? "❚❚" : "▶"}
+          </button>
+          <span className="time" dir="ltr">
+            {formatTime(frame, project.fps)} / {formatTime(total, project.fps)}
+          </span>
+          <div className="spacer" />
+          {!!project.angles?.length && <AngleButtons project={project} frame={frame} onCommit={commit} compact />}
+          <button className={showScopes ? "on" : ""} onClick={() => setShowScopes((v) => !v)} title={t("scopes")}>
+            {t("scopes")}
+          </button>
+          <button onClick={() => commit(splitAt(project, frame, selClip?.id))} title="S">
+            {t("split")}
+          </button>
+          <button onClick={quickText} title="T">
+            {t("addText")}
+          </button>
+        </div>
       </main>
 
-      <Timeline project={project} frame={frame} selected={selected} onSeek={(f) => { setPlaying(false); setFrame(f); }} onSelect={setSelected} />
+      <aside className="side right">
+        <h3 className="side-title">{t("properties")}</h3>
+        <div className="side-scroll">
+          {selText && (
+            <TextProperties
+              layer={selText}
+              fonts={fonts}
+              swatches={brand.colors}
+              fps={fpsValue(project.fps)}
+              onChange={(nt) => commit({ ...project, texts: project.texts.map((x) => (x.id === nt.id ? nt : x)) })}
+              onDelete={() => deleteSelected(false)}
+            />
+          )}
+          {selClip && (
+            <ClipProperties
+              clip={selClip}
+              fps={fpsValue(project.fps)}
+              frame={frame}
+              hasBefore={project.tracks.some((tr) => tr.clips.some((c) => c.id === selClip.id) && tr.clips.some((c) => c.id !== selClip.id && c.media !== "audio" && c.start + c.duration === selClip.start))}
+              onChange={(c) => commit(updateClip(project, c))}
+              onRipple={() => deleteSelected(true)}
+              onLift={() => deleteSelected(false)}
+            />
+          )}
+          {!selText && !selClip && (
+            <div className="panel-body">
+              <p className="hint">{total === 0 ? t("emptyHint") : t("selectHint")}</p>
+              <p className="hint small">{t("shortcutsHint")}</p>
+            </div>
+          )}
+        </div>
+      </aside>
 
-      {exporting && (
-        <div className="overlay">
-          <div className="dialog">
-            <h3>جارٍ التصدير</h3>
-            <progress max={exporting.total} value={exporting.done} />
-            <p>{Math.round((exporting.done / Math.max(1, exporting.total)) * 100)}٪</p>
-            <button onClick={() => api.cancelExport()}>إلغاء</button>
-          </div>
-        </div>
-      )}
-      {notice && (
-        <div className="toast" onClick={() => setNotice(null)} dir="auto">
-          {notice}
-        </div>
-      )}
-    </div>
-  );
-}
+      <section className="timeline-area">
+        <Timeline project={project} frame={frame} selected={selected} onSeek={setFrame} onSelect={setSelected} onCommit={commit} />
+      </section>
 
-function StartScreen(props: {
-  recovered: Project | null;
-  onRecover: () => void;
-  onOpen: () => void;
-  onNew: (w: number, h: number, label: string) => void;
-}) {
-  return (
-    <div className="start">
-      <h1>محرر الفيديو</h1>
-      {props.recovered && (
-        <div className="recover">
-          <span>وجدنا شغلك من آخر مرة: «{props.recovered.name}»</span>
-          <button className="primary" onClick={props.onRecover}>استرجاع</button>
+      {exporting && <ExportDialog project={project} onClose={() => setExporting(false)} onLoudness={(v) => commit({ ...project, loudness: v })} />}
+      {templateName !== null && (
+        <div className="modal-back">
+          <form
+            className="modal"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!templateName.trim()) return;
+              api
+                .saveTemplate(project, templateName.trim())
+                .then(() => setNotice(t("templateSaved")))
+                .catch((err) => setNotice(String(err)));
+              setTemplateName(null);
+            }}
+          >
+            <h2>{t("saveTemplate")}</h2>
+            <label>
+              {t("templateName")}
+              <input autoFocus dir="auto" value={templateName} onChange={(e) => setTemplateName(e.target.value)} />
+            </label>
+            <div className="modal-actions">
+              <button className="primary" type="submit">
+                {t("ok")}
+              </button>
+              <button type="button" onClick={() => setTemplateName(null)}>
+                {t("cancel")}
+              </button>
+            </div>
+          </form>
         </div>
       )}
-      <h2>مشروع جديد</h2>
-      <div className="formats">
-        {FORMATS.map((f) => (
-          <button key={f.id} className="format" onClick={() => props.onNew(f.width, f.height, f.label)}>
-            <span className="shape" style={{ aspectRatio: `${f.width} / ${f.height}` }} />
-            <strong>{f.label}</strong>
-            <span className="muted">{f.id}</span>
-          </button>
-        ))}
-      </div>
-      <button onClick={props.onOpen}>فتح مشروع محفوظ</button>
+      {notice && <div className="toast">{notice}</div>}
     </div>
   );
 }

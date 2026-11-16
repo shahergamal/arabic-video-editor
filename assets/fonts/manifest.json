@@ -35,6 +35,450 @@
         "https://raw.githubusercontent.com/google/fonts/main/ofl/amiri/Amiri-Bold.ttf"
       ],
       "license_file": "https://raw.githubusercontent.com/google/fonts/main/ofl/amiri/OFL.txt"
+    },
+    {
+      "id": "tajawal",
+      "family": "Tajawal",
+      "category": "modern",
+      "license": "OFL-1.1",
+      "commercial_use": true,
+      "files": [
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/tajawal/Tajawal-Light.ttf",
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/tajawal/Tajawal-Regular.ttf",
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/tajawal/Tajawal-Medium.ttf",
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/tajawal/Tajawal-Bold.ttf",
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/tajawal/Tajawal-ExtraBold.ttf",
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/tajawal/Tajawal-Black.ttf"
+      ],
+      "license_file": "https://raw.githubusercontent.com/google/fonts/main/ofl/tajawal/OFL.txt"
+    },
+    {
+      "id": "almarai",
+      "family": "Almarai",
+      "category": "modern",
+      "license": "OFL-1.1",
+      "commercial_use": true,
+      "files": [
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/almarai/Almarai-Light.ttf",
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/almarai/Almarai-Regular.ttf",
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/almarai/Almarai-Bold.ttf",
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/almarai/Almarai-ExtraBold.ttf"
+      ],
+      "license_file": "https://raw.githubusercontent.com/google/fonts/main/ofl/almarai/OFL.txt"
+    },
+    {
+      "id": "notonaskharabic",
+      "family": "Noto Naskh Arabic",
+      "category": "naskh",
+      "license": "OFL-1.1",
+      "commercial_use": true,
+      "files": [
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/notonaskharabic/NotoNaskhArabic%5Bwght%5D.ttf"
+      ],
+      "license_file": "https://raw.githubusercontent.com/google/fonts/main/ofl/notonaskharabic/OFL.txt"
+    },
+    {
+      "id": "notokufiarabic",
+      "family": "Noto Kufi Arabic",
+      "category": "kufi",
+      "license": "OFL-1.1",
+      "commercial_use": true,
+      "files": [
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/notokufiarabic/NotoKufiArabic%5Bwght%5D.ttf"
+      ],
+      "license_file": "https://raw.githubusercontent.com/google/fonts/main/ofl/notokufiarabic/OFL.txt"
+    },
+    {
+      "id": "notosansarabic",
+      "family": "Noto Sans Arabic",
+      "category": "modern",
+      "license": "OFL-1.1",
+      "commercial_use": true,
+      "files": [
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/notosansarabic/NotoSansArabic%5Bwdth%2Cwght%5D.ttf"
+      ],
+      "license_file": "https://raw.githubusercontent.com/google/fonts/main/ofl/notosansarabic/OFL.txt"
+    },
+    {
+      "id": "readexpro",
+      "family": "Readex Pro",
+      "category": "modern",
+      "license": "OFL-1.1",
+      "commercial_use": true,
+      "files": [
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/readexpro/ReadexPro%5BHEXP%2Cwght%5D.ttf"
+      ],
+      "license_file": "https://raw.githubusercontent.com/google/fonts/main/ofl/readexpro/OFL.txt"
+    },
+    {
+      "id": "changa",
+      "family": "Changa",
+      "category": "modern",
+      "license": "OFL-1.1",
+      "commercial_use": true,
+      "files": [
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/changa/Changa%5Bwght%5D.ttf"
+      ],
+      "license_file": "https://raw.githubusercontent.com/google/fonts/main/ofl/changa/OFL.txt"
+    },
+    {
+      "id": "elmessiri",
+      "family": "El Messiri",
+      "category": "display",
+      "license": "OFL-1.1",
+      "commercial_use": true,
+      "files": [
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/elmessiri/ElMessiri%5Bwght%5D.ttf"
+      ],
+      "license_file": "https://raw.githubusercontent.com/google/fonts/main/ofl/elmessiri/OFL.txt"
+    },
+    {
+      "id": "reemkufi",
+      "family": "Reem Kufi",
+      "category": "kufi",
+      "license": "OFL-1.1",
+      "commercial_use": true,
+      "files": [
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/reemkufi/ReemKufi%5Bwght%5D.ttf"
+      ],
+      "license_file": "https://raw.githubusercontent.com/google/fonts/main/ofl/reemkufi/OFL.txt"
+    },
+    {
+      "id": "reemkufifun",
+      "family": "Reem Kufi Fun",
+      "category": "kufi",
+      "license": "OFL-1.1",
+      "commercial_use": true,
+      "files": [
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/reemkufifun/ReemKufiFun%5Bwght%5D.ttf"
+      ],
+      "license_file": "https://raw.githubusercontent.com/google/fonts/main/ofl/reemkufifun/OFL.txt"
+    },
+    {
+      "id": "reemkufiink",
+      "family": "Reem Kufi Ink",
+      "category": "kufi",
+      "license": "OFL-1.1",
+      "commercial_use": true,
+      "files": [
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/reemkufiink/ReemKufiInk-Regular.ttf"
+      ],
+      "license_file": "https://raw.githubusercontent.com/google/fonts/main/ofl/reemkufiink/OFL.txt"
+    },
+    {
+      "id": "kufam",
+      "family": "Kufam",
+      "category": "kufi",
+      "license": "OFL-1.1",
+      "commercial_use": true,
+      "files": [
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/kufam/Kufam%5Bwght%5D.ttf"
+      ],
+      "license_file": "https://raw.githubusercontent.com/google/fonts/main/ofl/kufam/OFL.txt"
+    },
+    {
+      "id": "qahiri",
+      "family": "Qahiri",
+      "category": "kufi",
+      "license": "OFL-1.1",
+      "commercial_use": true,
+      "files": [
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/qahiri/Qahiri-Regular.ttf"
+      ],
+      "license_file": "https://raw.githubusercontent.com/google/fonts/main/ofl/qahiri/OFL.txt"
+    },
+    {
+      "id": "arefruqaa",
+      "family": "Aref Ruqaa",
+      "category": "ruqaa",
+      "license": "OFL-1.1",
+      "commercial_use": true,
+      "files": [
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/arefruqaa/ArefRuqaa-Regular.ttf",
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/arefruqaa/ArefRuqaa-Bold.ttf"
+      ],
+      "license_file": "https://raw.githubusercontent.com/google/fonts/main/ofl/arefruqaa/OFL.txt"
+    },
+    {
+      "id": "arefruqaaink",
+      "family": "Aref Ruqaa Ink",
+      "category": "ruqaa",
+      "license": "OFL-1.1",
+      "commercial_use": true,
+      "files": [
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/arefruqaaink/ArefRuqaaInk-Regular.ttf",
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/arefruqaaink/ArefRuqaaInk-Bold.ttf"
+      ],
+      "license_file": "https://raw.githubusercontent.com/google/fonts/main/ofl/arefruqaaink/OFL.txt"
+    },
+    {
+      "id": "lateef",
+      "family": "Lateef",
+      "category": "naskh",
+      "license": "OFL-1.1",
+      "commercial_use": true,
+      "files": [
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/lateef/Lateef-Light.ttf",
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/lateef/Lateef-Regular.ttf",
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/lateef/Lateef-Medium.ttf",
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/lateef/Lateef-SemiBold.ttf",
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/lateef/Lateef-Bold.ttf",
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/lateef/Lateef-ExtraBold.ttf"
+      ],
+      "license_file": "https://raw.githubusercontent.com/google/fonts/main/ofl/lateef/OFL.txt"
+    },
+    {
+      "id": "scheherazadenew",
+      "family": "Scheherazade New",
+      "category": "naskh",
+      "license": "OFL-1.1",
+      "commercial_use": true,
+      "files": [
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/scheherazadenew/ScheherazadeNew-Regular.ttf",
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/scheherazadenew/ScheherazadeNew-Medium.ttf",
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/scheherazadenew/ScheherazadeNew-SemiBold.ttf",
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/scheherazadenew/ScheherazadeNew-Bold.ttf"
+      ],
+      "license_file": "https://raw.githubusercontent.com/google/fonts/main/ofl/scheherazadenew/OFL.txt"
+    },
+    {
+      "id": "markazitext",
+      "family": "Markazi Text",
+      "category": "naskh",
+      "license": "OFL-1.1",
+      "commercial_use": true,
+      "files": [
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/markazitext/MarkaziText%5Bwght%5D.ttf"
+      ],
+      "license_file": "https://raw.githubusercontent.com/google/fonts/main/ofl/markazitext/OFL.txt"
+    },
+    {
+      "id": "mirza",
+      "family": "Mirza",
+      "category": "naskh",
+      "license": "OFL-1.1",
+      "commercial_use": true,
+      "files": [
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/mirza/Mirza-Regular.ttf",
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/mirza/Mirza-Medium.ttf",
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/mirza/Mirza-SemiBold.ttf",
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/mirza/Mirza-Bold.ttf"
+      ],
+      "license_file": "https://raw.githubusercontent.com/google/fonts/main/ofl/mirza/OFL.txt"
+    },
+    {
+      "id": "amiriquran",
+      "family": "Amiri Quran",
+      "category": "naskh",
+      "license": "OFL-1.1",
+      "commercial_use": true,
+      "files": [
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/amiriquran/AmiriQuran-Regular.ttf"
+      ],
+      "license_file": "https://raw.githubusercontent.com/google/fonts/main/ofl/amiriquran/OFL.txt"
+    },
+    {
+      "id": "gulzar",
+      "family": "Gulzar",
+      "category": "nastaliq",
+      "license": "OFL-1.1",
+      "commercial_use": true,
+      "files": [
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/gulzar/Gulzar-Regular.ttf"
+      ],
+      "license_file": "https://raw.githubusercontent.com/google/fonts/main/ofl/gulzar/OFL.txt"
+    },
+    {
+      "id": "lalezar",
+      "family": "Lalezar",
+      "category": "display",
+      "license": "OFL-1.1",
+      "commercial_use": true,
+      "files": [
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/lalezar/Lalezar-Regular.ttf"
+      ],
+      "license_file": "https://raw.githubusercontent.com/google/fonts/main/ofl/lalezar/OFL.txt"
+    },
+    {
+      "id": "rakkas",
+      "family": "Rakkas",
+      "category": "display",
+      "license": "OFL-1.1",
+      "commercial_use": true,
+      "files": [
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/rakkas/Rakkas-Regular.ttf"
+      ],
+      "license_file": "https://raw.githubusercontent.com/google/fonts/main/ofl/rakkas/OFL.txt"
+    },
+    {
+      "id": "katibeh",
+      "family": "Katibeh",
+      "category": "display",
+      "license": "OFL-1.1",
+      "commercial_use": true,
+      "files": [
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/katibeh/Katibeh-Regular.ttf"
+      ],
+      "license_file": "https://raw.githubusercontent.com/google/fonts/main/ofl/katibeh/OFL.txt"
+    },
+    {
+      "id": "jomhuria",
+      "family": "Jomhuria",
+      "category": "display",
+      "license": "OFL-1.1",
+      "commercial_use": true,
+      "files": [
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/jomhuria/Jomhuria-Regular.ttf"
+      ],
+      "license_file": "https://raw.githubusercontent.com/google/fonts/main/ofl/jomhuria/OFL.txt"
+    },
+    {
+      "id": "lemonada",
+      "family": "Lemonada",
+      "category": "display",
+      "license": "OFL-1.1",
+      "commercial_use": true,
+      "files": [
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/lemonada/Lemonada%5Bwght%5D.ttf"
+      ],
+      "license_file": "https://raw.githubusercontent.com/google/fonts/main/ofl/lemonada/OFL.txt"
+    },
+    {
+      "id": "marhey",
+      "family": "Marhey",
+      "category": "display",
+      "license": "OFL-1.1",
+      "commercial_use": true,
+      "files": [
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/marhey/Marhey%5Bwght%5D.ttf"
+      ],
+      "license_file": "https://raw.githubusercontent.com/google/fonts/main/ofl/marhey/OFL.txt"
+    },
+    {
+      "id": "blaka",
+      "family": "Blaka",
+      "category": "display",
+      "license": "OFL-1.1",
+      "commercial_use": true,
+      "files": [
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/blaka/Blaka-Regular.ttf"
+      ],
+      "license_file": "https://raw.githubusercontent.com/google/fonts/main/ofl/blaka/OFL.txt"
+    },
+    {
+      "id": "baloobhaijaan2",
+      "family": "Baloo Bhaijaan 2",
+      "category": "display",
+      "license": "OFL-1.1",
+      "commercial_use": true,
+      "files": [
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/baloobhaijaan2/BalooBhaijaan2%5Bwght%5D.ttf"
+      ],
+      "license_file": "https://raw.githubusercontent.com/google/fonts/main/ofl/baloobhaijaan2/OFL.txt"
+    },
+    {
+      "id": "badeendisplay",
+      "family": "Badeen Display",
+      "category": "display",
+      "license": "OFL-1.1",
+      "commercial_use": true,
+      "files": [
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/badeendisplay/BadeenDisplay-Regular.ttf"
+      ],
+      "license_file": "https://raw.githubusercontent.com/google/fonts/main/ofl/badeendisplay/OFL.txt"
+    },
+    {
+      "id": "handjet",
+      "family": "Handjet",
+      "category": "display",
+      "license": "OFL-1.1",
+      "commercial_use": true,
+      "files": [
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/handjet/Handjet%5BELGR%2CELSH%2Cwght%5D.ttf"
+      ],
+      "license_file": "https://raw.githubusercontent.com/google/fonts/main/ofl/handjet/OFL.txt"
+    },
+    {
+      "id": "alexandria",
+      "family": "Alexandria",
+      "category": "modern",
+      "license": "OFL-1.1",
+      "commercial_use": true,
+      "files": [
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/alexandria/Alexandria%5Bwght%5D.ttf"
+      ],
+      "license_file": "https://raw.githubusercontent.com/google/fonts/main/ofl/alexandria/OFL.txt"
+    },
+    {
+      "id": "vazirmatn",
+      "family": "Vazirmatn",
+      "category": "modern",
+      "license": "OFL-1.1",
+      "commercial_use": true,
+      "files": [
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/vazirmatn/Vazirmatn%5Bwght%5D.ttf"
+      ],
+      "license_file": "https://raw.githubusercontent.com/google/fonts/main/ofl/vazirmatn/OFL.txt"
+    },
+    {
+      "id": "mada",
+      "family": "Mada",
+      "category": "modern",
+      "license": "OFL-1.1",
+      "commercial_use": true,
+      "files": [
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/mada/Mada%5Bwght%5D.ttf"
+      ],
+      "license_file": "https://raw.githubusercontent.com/google/fonts/main/ofl/mada/OFL.txt"
+    },
+    {
+      "id": "harmattan",
+      "family": "Harmattan",
+      "category": "modern",
+      "license": "OFL-1.1",
+      "commercial_use": true,
+      "files": [
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/harmattan/Harmattan-Regular.ttf",
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/harmattan/Harmattan-Medium.ttf",
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/harmattan/Harmattan-SemiBold.ttf",
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/harmattan/Harmattan-Bold.ttf"
+      ],
+      "license_file": "https://raw.githubusercontent.com/google/fonts/main/ofl/harmattan/OFL.txt"
+    },
+    {
+      "id": "zain",
+      "family": "Zain",
+      "category": "modern",
+      "license": "OFL-1.1",
+      "commercial_use": true,
+      "files": [
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/zain/Zain-Light.ttf",
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/zain/Zain-Regular.ttf",
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/zain/Zain-Bold.ttf",
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/zain/Zain-ExtraBold.ttf",
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/zain/Zain-Black.ttf"
+      ],
+      "license_file": "https://raw.githubusercontent.com/google/fonts/main/ofl/zain/OFL.txt"
+    },
+    {
+      "id": "playpensansarabic",
+      "family": "Playpen Sans Arabic",
+      "category": "handwritten",
+      "license": "OFL-1.1",
+      "commercial_use": true,
+      "files": [
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/playpensansarabic/PlaypenSansArabic%5Bwght%5D.ttf"
+      ],
+      "license_file": "https://raw.githubusercontent.com/google/fonts/main/ofl/playpensansarabic/OFL.txt"
     }
-  ]
+  ],
+  "categories": {
+    "modern": "حديث",
+    "kufi": "كوفي",
+    "naskh": "نسخ",
+    "ruqaa": "رقعة",
+    "nastaliq": "نستعليق",
+    "display": "عناوين",
+    "handwritten": "يدوي"
+  }
 }

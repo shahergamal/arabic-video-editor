@@ -4,14 +4,23 @@
 pub mod compose;
 pub mod export;
 pub mod frame;
+pub mod interchange;
+pub mod lut;
+pub mod matte;
 pub mod media;
+pub mod multicam;
 pub mod project;
+pub mod scopes;
 pub mod text;
 pub mod time;
+pub mod track;
 
 pub use compose::Compositor;
 pub use frame::Frame;
-pub use project::{Clip, Project, TextLayer};
+pub use project::{
+    Adjust, Angle, AudioFx, ChromaKey, Clip, Keyframe, Layer, Mask, MaskPoint, MediaKind, Project, SpeedPoint, TextAnim, TextLayer, Track,
+    TrackKind, Transform, Transition,
+};
 pub use time::Fps;
 
 #[derive(Debug, thiserror::Error)]
@@ -26,6 +35,10 @@ pub enum Error {
     Json(#[from] serde_json::Error),
     #[error("export was cancelled")]
     Cancelled,
+    #[error("model error: {0}")]
+    Model(String),
+    #[error("could not read the timeline file: {0}")]
+    Interchange(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

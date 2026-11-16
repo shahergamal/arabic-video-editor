@@ -55,7 +55,7 @@ crates/engine      Rust engine: project model, decoding (ffmpeg process), Arabic
 app/               Tauri 2 desktop app: React + TypeScript UI in app/src,
                    Rust commands in app/src-tauri
 assets/fonts       Bundled open-license fonts + manifest.json (each with its license)
-scripts/           fetch-fonts.mjs, fetch-ffmpeg.mjs
+scripts/           fetch-fonts.mjs, fetch-ffmpeg.mjs, build-windows.ps1 (build + install on Windows)
 ```
 
 Requirements: Rust (stable), Node 22, ffmpeg on PATH for tests.

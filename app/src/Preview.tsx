@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { api } from "./api";
 import { useT } from "./i18n";
+import { audibleClips } from "./edits5";
 import type { Clip, Project } from "./types";
 import { fpsValue, projectDuration } from "./types";
 
@@ -13,6 +14,8 @@ interface Props {
   playing: boolean;
   onFrame: (f: number) => void;
   onStop: () => void;
+  /** Playing speed: 1 normal, 2 or 4 faster, negative plays backwards (J/K/L). */
+  rate?: number;
 }
 
 /** Preview size: the project shape, at most 960 px on the long side, even numbers. */
@@ -22,9 +25,8 @@ function previewSize(p: Project, boxW: number, boxH: number) {
   return { w: even(p.width), h: even(p.height) };
 }
 
-/** Clips you can hear, with their track's mute applied. */
-const audible = (p: Project): Clip[] =>
-  p.tracks.filter((t) => !t.muted).flatMap((t) => t.clips.filter((c) => c.media !== "image" && c.volume > 0 && !c.speed_ramp?.length));
+/** Clips you can hear, with their track's mute applied and groups taken apart. */
+const audible = (p: Project): Clip[] => audibleClips(p);
 
 /** Loudness of a clip at a frame, with its fades. The browser caps volume at 1. */
 function gainAt(c: Clip, frame: number) {
@@ -36,7 +38,7 @@ function gainAt(c: Clip, frame: number) {
   return Math.max(0, Math.min(1, g));
 }
 
-export function Preview({ project, revision, frame, playing, onFrame, onStop }: Props) {
+export function Preview({ project, revision, frame, playing, onFrame, onStop, rate = 1 }: Props) {
   const t = useT();
   const wrap = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -85,7 +87,7 @@ export function Preview({ project, revision, frame, playing, onFrame, onStop }: 
     const p = live.current;
     const fps = fpsValue(p.fps);
     const end = projectDuration(p);
-    const startFrame = frame >= end - 1 ? 0 : frame;
+    const startFrame = rate > 0 && frame >= end - 1 ? 0 : frame;
     const t0 = performance.now();
     const players = new Map<string, HTMLAudioElement>();
     let stopped = false;
@@ -94,7 +96,8 @@ export function Preview({ project, revision, frame, playing, onFrame, onStop }: 
     let dropped = 0;
 
     const syncAudio = (target: number) => {
-      const now = audible(live.current).filter((c) => target >= c.start && target < c.start + c.duration);
+      // Backwards there is no sound, like scrubbing a tape.
+      const now = rate < 0 ? [] : audible(live.current).filter((c) => target >= c.start && target < c.start + c.duration);
       for (const [id, el] of players) if (!now.some((c) => c.id === id)) el.pause();
       for (const c of now) {
         let el = players.get(c.id);
@@ -103,8 +106,8 @@ export function Preview({ project, revision, frame, playing, onFrame, onStop }: 
           el.preload = "auto";
           players.set(c.id, el);
         }
-        const speed = c.speed ?? 1;
-        const want = c.source_in + ((target - c.start) / fps) * speed;
+        const speed = (c.speed ?? 1) * rate;
+        const want = c.source_in + ((target - c.start) / fps) * (c.speed ?? 1);
         if (el.playbackRate !== speed) el.playbackRate = speed;
         if (el.paused || Math.abs(el.currentTime - want) > 0.2) {
           el.currentTime = want;
@@ -116,13 +119,13 @@ export function Preview({ project, revision, frame, playing, onFrame, onStop }: 
 
     const tick = async () => {
       while (!stopped) {
-        const target = startFrame + Math.floor(((performance.now() - t0) / 1000) * fps);
-        if (target >= end) break;
-        if (target <= last) {
+        const target = startFrame + Math.trunc(((performance.now() - t0) / 1000) * fps * rate);
+        if (target >= end || target < 0) break;
+        if (rate > 0 ? target <= last : target >= last && last !== startFrame - 1) {
           await new Promise((r) => requestAnimationFrame(() => r(null)));
           continue;
         }
-        if (target > last + 1 && last >= startFrame) dropped += target - last - 1;
+        if (rate > 0 && target > last + 1 && last >= startFrame) dropped += target - last - 1;
         syncAudio(target);
         try {
           draw(await decode(await api.frame(target, w, h)));
@@ -150,7 +153,7 @@ export function Preview({ project, revision, frame, playing, onFrame, onStop }: 
     };
     // Restart only when play is pressed or the picture size changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playing, w, h]);
+  }, [playing, w, h, rate]);
 
   return (
     <div className="preview" ref={wrap}>

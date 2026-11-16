@@ -3,6 +3,7 @@ import { ExchangeSection } from "./Phase4Panels";
 import { listen } from "@tauri-apps/api/event";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { api, type ExportJob } from "./api";
+import { api5 } from "./api5";
 import { useT } from "./i18n";
 import type { Project } from "./types";
 import { FORMATS } from "./types";
@@ -21,12 +22,19 @@ type State =
 const sameShape = (a: { width: number; height: number }, b: { width: number; height: number }) =>
   Math.abs(a.width * b.height - a.height * b.width) <= Math.max(a.width, a.height);
 
+const gpuName = (e: string) => (e.includes("nvenc") ? "NVIDIA" : e.includes("qsv") ? "Intel" : e.includes("amf") ? "AMD" : e.includes("videotoolbox") ? "Apple" : e);
+
 export function ExportDialog({ project, onClose, onLoudness }: { project: Project; onClose: () => void; onLoudness: (v: number | null) => void }) {
   const t = useT();
   const [crf, setCrf] = useState(21);
   const [scale, setScale] = useState(1);
   const [extra, setExtra] = useState<string[]>([]);
   const [fill, setFill] = useState(true);
+  const [encoder, setEncoder] = useState<"auto" | "cpu">("auto");
+  const [gpus, setGpus] = useState<string[] | null>(null);
+  useEffect(() => {
+    api5.encoders().then(setGpus).catch(() => setGpus([]));
+  }, []);
   const [state, setState] = useState<State>({ step: "settings" });
   const others = FORMATS.filter((f) => !sameShape(f, project));
 
@@ -47,11 +55,11 @@ export function ExportDialog({ project, onClose, onLoudness }: { project: Projec
     const path = await saveDialog({ defaultPath: `${base}.mp4`, filters: [{ name: "MP4", extensions: ["mp4"] }] });
     if (!path) return;
     const stem = path.replace(/\.mp4$/i, "");
-    const jobs: ExportJob[] = [{ path, width: even(project.width * scale), height: even(project.height * scale), crf }];
+    const jobs: ExportJob[] = [{ path, width: even(project.width * scale), height: even(project.height * scale), crf, encoder }];
     for (const f of others.filter((f) => extra.includes(f.id))) {
       // Other shapes keep the same long side as the main version.
       const k = (Math.max(project.width, project.height) * scale) / Math.max(f.width, f.height);
-      jobs.push({ path: `${stem} ${f.id.replace(":", "x")}.mp4`, width: even(f.width * k), height: even(f.height * k), crf, fill });
+      jobs.push({ path: `${stem} ${f.id.replace(":", "x")}.mp4`, width: even(f.width * k), height: even(f.height * k), crf, fill, encoder });
     }
     setState({ step: "running", job: 0, jobs: jobs.length, done: 0, total: 1 });
     api.startExport(jobs).catch((e) => setState({ step: "finished", ok: false, message: String(e) }));
@@ -103,6 +111,18 @@ export function ExportDialog({ project, onClose, onLoudness }: { project: Projec
               <input type="checkbox" checked={project.loudness != null} onChange={(e) => onLoudness(e.target.checked ? -14 : null)} />
               {t("loudnessOpt")} <span dir="ltr">(−14 LUFS)</span>
             </label>
+            <p className="label">{t("encoder")}</p>
+            <div className="segmented">
+              <button className={encoder === "auto" ? "on" : ""} onClick={() => setEncoder("auto")} disabled={gpus !== null && gpus.length === 0}>
+                {t("encoderGpu")}
+              </button>
+              <button className={encoder === "cpu" ? "on" : ""} onClick={() => setEncoder("cpu")}>
+                {t("encoderCpu")}
+              </button>
+            </div>
+            <p className="hint small">
+              {gpus === null ? `${t("checkingGpu")}…` : gpus.length ? `${t("gpuFound")}: ${gpus.map(gpuName).join("، ")}` : t("noGpu")}
+            </p>
             <p className="muted" dir="ltr">
               MP4 · H.264 · AAC · {Math.round(project.fps.num / project.fps.den)} fps
             </p>

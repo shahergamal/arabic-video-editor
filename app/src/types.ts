@@ -5,7 +5,7 @@ export interface Fps {
   den: number;
 }
 
-export type MediaKind = "video" | "image" | "audio";
+export type MediaKind = "video" | "image" | "audio" | "compound";
 export type TrackKind = "video" | "audio";
 
 export interface Transform {
@@ -13,7 +13,18 @@ export interface Transform {
   x: number;
   y: number;
   opacity: number;
+  /** Degrees, clockwise. */
+  rotation?: number;
 }
+
+export interface Crop {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+export type BlendMode = "" | "normal" | "multiply" | "screen" | "overlay" | "add" | "darken" | "lighten";
 
 export interface Clip {
   id: string;
@@ -35,6 +46,16 @@ export interface Clip {
   mask?: Mask | null;
   speed_ramp?: SpeedPoint[];
   audio_fx?: AudioFx;
+  /** Play backwards; `source_in` then counts in the reversed file. */
+  reverse?: boolean;
+  /** One still picture (at `source_in`), silent. */
+  freeze?: boolean;
+  flip_h?: boolean;
+  flip_v?: boolean;
+  crop?: Crop;
+  blend?: BlendMode;
+  /** 0 (off) to 1. */
+  stabilize?: number;
 }
 
 export interface ChromaKey {
@@ -82,6 +103,18 @@ export interface Adjust {
   vignette?: number;
   lut?: string | null;
   lut_strength?: number;
+  lift?: [number, number, number];
+  gamma?: [number, number, number];
+  gain?: [number, number, number];
+  curves?: Curves;
+}
+
+export type CurvePoint = [number, number];
+export interface Curves {
+  master?: CurvePoint[];
+  r?: CurvePoint[];
+  g?: CurvePoint[];
+  b?: CurvePoint[];
 }
 
 export interface Keyframe {
@@ -96,7 +129,7 @@ export interface Transition {
   frames: number;
 }
 
-export type TextAnimKind = "none" | "fade" | "rise" | "pop" | "zoom" | "words";
+export type TextAnimKind = "none" | "fade" | "rise" | "pop" | "zoom" | "words" | "draw";
 export interface TextAnim {
   kind: TextAnimKind;
   frames: number;
@@ -147,6 +180,42 @@ export interface Project {
   texts: TextLayer[];
   loudness?: number | null;
   angles?: Angle[];
+  markers?: Marker[];
+  shapes?: Shape[];
+  compounds?: Compound[];
+}
+
+export interface Marker {
+  frame: number;
+  label: string;
+  color: string;
+}
+
+export type ShapeKind = "rect" | "ellipse" | "line" | "arrow" | "star";
+export interface Shape {
+  id: string;
+  kind: ShapeKind;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  rotation: number;
+  fill: Rgba;
+  stroke: Rgba;
+  stroke_width: number;
+  radius: number;
+  shadow: boolean;
+  start: number;
+  duration: number;
+  anim_in?: TextAnim | null;
+  anim_out?: TextAnim | null;
+}
+
+/** Clips grouped into one; a compound clip's `source` is the group's id. */
+export interface Compound {
+  id: string;
+  name: string;
+  tracks: Track[];
 }
 
 /** One camera of a multi-camera shoot; see the engine's `Angle`. */
@@ -187,7 +256,7 @@ export const fpsValue = (f: Fps) => f.num / f.den;
 export const allClips = (p: Project) => p.tracks.flatMap((t) => t.clips);
 
 export function projectDuration(p: Project): number {
-  const ends = [...allClips(p).map((c) => c.start + c.duration), ...p.texts.map((t) => t.start + t.duration)];
+  const ends = [...allClips(p).map((c) => c.start + c.duration), ...p.texts.map((t) => t.start + t.duration), ...(p.shapes ?? []).map((s) => s.start + s.duration)];
   return ends.length ? Math.max(...ends) : 0;
 }
 
@@ -204,7 +273,7 @@ export const FORMATS = [
 
 export function newProject(name: string, width: number, height: number): Project {
   return {
-    version: 5,
+    version: 6,
     name,
     width,
     height,
@@ -257,6 +326,9 @@ export function formatTime(frame: number, fps: Fps): string {
 }
 
 export const fileName = (path: string) => path.split(/[\\/]/).pop() ?? path;
+
+/** A clip that reads a media file (not a group). */
+export const isFile = (c: Clip) => c.media !== "compound";
 
 export const VIDEO_EXT = ["mp4", "mov", "mkv", "webm", "m4v", "avi", "mts", "m2ts", "3gp"];
 export const IMAGE_EXT = ["png", "jpg", "jpeg", "webp", "bmp", "gif", "tif", "tiff", "heic"];

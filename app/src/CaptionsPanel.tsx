@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api } from "./api";
 import { CAPTION_PREFIX, segmentsToTexts, type Segment } from "./captions";
+import { api5 } from "./api5";
 import { useT } from "./i18n";
 import { PRESETS } from "./TextPresets";
 import type { Project, TextLayer } from "./types";
@@ -19,6 +20,7 @@ export function CaptionsPanel({ project, families, onAdd }: { project: Project; 
   const [lang, setLang] = useState("ar");
   const [style, setStyle] = useState<(typeof STYLES)[number]>("presetCaption");
   const [replace, setReplace] = useState(true);
+  const [translate, setTranslate] = useState(false);
   const [busy, setBusy] = useState<Busy>(null);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -100,6 +102,10 @@ export function CaptionsPanel({ project, families, onAdd }: { project: Project; 
         <input type="checkbox" checked={replace} onChange={(e) => setReplace(e.target.checked)} />
         {t("replaceCaptions")}
       </label>
+      <label className="check">
+        <input type="checkbox" checked={translate} onChange={(e) => setTranslate(e.target.checked)} />
+        {t("translateToEnglish")}
+      </label>
 
       {busy ? (
         <>
@@ -135,7 +141,7 @@ export function CaptionsPanel({ project, families, onAdd }: { project: Project; 
           onClick={() => {
             setMessage(null);
             setBusy({ what: "listen", done: 0, total: 100 });
-            api.transcribe(model, lang).catch((e) => {
+            api5.transcribe(model, lang, translate).catch((e) => {
               setBusy(null);
               setMessage(String(e));
             });

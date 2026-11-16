@@ -45,7 +45,7 @@ pub fn export(
 
     // Audio: each clip's own sound, trimmed and placed where the clip sits.
     let mut audio_inputs = vec![];
-    for clip in &project.clips {
+    for clip in project.audible_clips() {
         if probe(&clip.source).map(|i| i.has_audio).unwrap_or(false) {
             cmd.arg("-i").arg(&clip.source);
             audio_inputs.push(clip);
@@ -58,9 +58,17 @@ pub fn export(
             let start = clip.source_in;
             let dur = project.fps.frame_to_seconds(clip.duration);
             let delay_ms = (project.fps.frame_to_seconds(clip.start) * 1000.0).round() as u64;
+            let mut fades = String::new();
+            if clip.fade_in > 0 {
+                fades += &format!(",afade=t=in:st=0:d={:.6}", project.fps.frame_to_seconds(clip.fade_in));
+            }
+            if clip.fade_out > 0 {
+                let d = project.fps.frame_to_seconds(clip.fade_out);
+                fades += &format!(",afade=t=out:st={:.6}:d={d:.6}", (dur - d).max(0.0));
+            }
             graph += &format!(
                 "[{n}:a]atrim=start={start:.6}:duration={dur:.6},asetpts=PTS-STARTPTS,\
-                 aresample=48000,volume={vol},adelay={delay_ms}:all=1[a{i}];",
+                 aresample=48000,volume={vol}{fades},adelay={delay_ms}:all=1[a{i}];",
                 n = i + 1,
                 vol = clip.volume
             );

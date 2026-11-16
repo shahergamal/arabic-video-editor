@@ -92,12 +92,9 @@ pub struct FrameReader {
 
 impl FrameReader {
     pub fn open(path: &Path, start_seconds: f64, width: u32, height: u32, fps: Fps) -> Result<Self> {
-        // Fit the picture inside the frame and fill the rest with black.
-        let filter = format!(
-            "fps={fps},scale={width}:{height}:force_original_aspect_ratio=decrease:flags=bicubic,\
-             pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black,format=rgba",
-            fps = fps.as_ffmpeg()
-        );
+        // Fit the picture inside the frame; the rest stays see-through so
+        // tracks underneath show (black shows if there is nothing below).
+        let filter = format!("fps={fps},{}", fit_filter(width, height), fps = fps.as_ffmpeg());
         let mut child = command(ffmpeg_path())
             .args(["-v", "error", "-nostdin"])
             .args(["-ss", &format!("{start_seconds:.6}")])
@@ -125,6 +122,63 @@ impl FrameReader {
         }
         Ok(Some(Frame { width: self.width, height: self.height, data }))
     }
+}
+
+fn fit_filter(width: u32, height: u32) -> String {
+    format!(
+        "scale={width}:{height}:force_original_aspect_ratio=decrease:flags=bicubic,format=rgba,\
+         pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black@0"
+    )
+}
+
+/// Reads a still image (PNG, JPEG, WebP...) fitted to the frame.
+pub fn read_still(path: &Path, width: u32, height: u32) -> Result<Frame> {
+    let out = command(ffmpeg_path())
+        .args(["-v", "error", "-nostdin", "-i"])
+        .arg(path)
+        .args(["-frames:v", "1", "-vf", &fit_filter(width, height), "-f", "rawvideo", "-pix_fmt", "rgba", "-"])
+        .output()
+        .map_err(Error::FfmpegMissing)?;
+    if !out.status.success() || out.stdout.len() != Frame::byte_len(width, height) {
+        return Err(Error::Ffmpeg(String::from_utf8_lossy(&out.stderr).into_owned()));
+    }
+    Ok(Frame { width, height, data: out.stdout })
+}
+
+/// Sound level of a file over time, as `buckets` peaks between 0 and 1,
+/// for drawing the waveform on the timeline.
+pub fn waveform(path: &Path, buckets: usize) -> Result<Vec<f32>> {
+    let out = command(ffmpeg_path())
+        .args(["-v", "error", "-nostdin", "-i"])
+        .arg(path)
+        .args(["-vn", "-ac", "1", "-ar", "4000", "-f", "f32le", "-"])
+        .output()
+        .map_err(Error::FfmpegMissing)?;
+    if !out.status.success() {
+        return Err(Error::Ffmpeg(String::from_utf8_lossy(&out.stderr).into_owned()));
+    }
+    let samples: Vec<f32> = out.stdout.chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
+    if samples.is_empty() || buckets == 0 {
+        return Ok(vec![]);
+    }
+    let per = samples.len().div_ceil(buckets);
+    Ok(samples.chunks(per).map(|c| c.iter().fold(0f32, |m, v| m.max(v.abs())).min(1.0)).collect())
+}
+
+/// A small JPEG picture of the file, for the media library.
+pub fn thumbnail(path: &Path, width: u32) -> Result<Vec<u8>> {
+    let info = probe(path)?;
+    let at = if info.duration > 2.0 { info.duration * 0.1 } else { 0.0 };
+    let out = command(ffmpeg_path())
+        .args(["-v", "error", "-nostdin", "-ss", &format!("{at:.3}"), "-i"])
+        .arg(path)
+        .args(["-frames:v", "1", "-vf", &format!("scale={width}:-2"), "-f", "image2", "-c:v", "mjpeg", "-q:v", "5", "-"])
+        .output()
+        .map_err(Error::FfmpegMissing)?;
+    if !out.status.success() || out.stdout.is_empty() {
+        return Err(Error::Ffmpeg(String::from_utf8_lossy(&out.stderr).into_owned()));
+    }
+    Ok(out.stdout)
 }
 
 impl Drop for FrameReader {

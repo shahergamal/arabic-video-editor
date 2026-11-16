@@ -4,7 +4,7 @@
 mod common;
 use engine::export::{export, ExportSettings};
 use engine::media::{probe, FrameReader};
-use engine::{Clip, Compositor, Fps, Project, TextLayer};
+use engine::{Clip, Compositor, Fps, MediaKind, Project, TextLayer, TrackKind};
 use std::sync::atomic::AtomicBool;
 
 #[test]
@@ -14,14 +14,7 @@ fn exported_frames_match_preview_frames() {
     let source_before = std::fs::read(&source).unwrap();
 
     let mut p = Project::new("match", 640, 360, Fps::new(30, 1));
-    p.clips.push(Clip {
-        id: "c1".into(),
-        source: source.clone(),
-        start: 0,
-        duration: 60,
-        source_in: 0.5,
-        volume: 1.0,
-    });
+    p.track_mut(TrackKind::Video).clips.push(Clip::new("c1", MediaKind::Video, source.clone(), 0, 60, 0.5));
     p.texts.push(TextLayer {
         id: "t1".into(),
         text: "شقة للبيع - ١٢٠ متر".into(),
@@ -33,6 +26,10 @@ fn exported_frames_match_preview_frames() {
         y: 0.75,
         box_width: 0.9,
         shadow: true,
+        outline: 0.0,
+        outline_color: [0, 0, 0, 255],
+        background: [0, 0, 0, 0],
+        align: "center".into(),
         start: 10,
         duration: 40,
     });
@@ -88,7 +85,7 @@ fn cancelled_export_leaves_no_file() {
     let dir = tempfile::tempdir().unwrap();
     let source = common::make_test_video(dir.path());
     let mut p = Project::new("cancel", 320, 180, Fps::new(30, 1));
-    p.clips.push(Clip { id: "c".into(), source, start: 0, duration: 90, source_in: 0.0, volume: 1.0 });
+    p.track_mut(TrackKind::Video).clips.push(Clip::new("c", MediaKind::Video, source, 0, 90, 0.0));
     let mut comp = Compositor::new(None);
     let out = dir.path().join("out.mp4");
     let cancel = AtomicBool::new(false);

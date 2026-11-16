@@ -11,7 +11,7 @@ pub mod time;
 
 pub use compose::Compositor;
 pub use frame::Frame;
-pub use project::{Clip, Project, TextLayer};
+pub use project::{Clip, MediaKind, Project, TextLayer, Track, TrackKind, Transform};
 pub use time::Fps;
 
 #[derive(Debug, thiserror::Error)]

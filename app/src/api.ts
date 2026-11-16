@@ -38,6 +38,14 @@ export const api = {
   templates: () => invoke<TemplateInfo[]>("list_templates"),
   deleteTemplate: (path: string) => invoke<void>("delete_template", { path }),
   loadTemplate: (path: string) => invoke<Project>("load_template", { path }),
+  matteModels: () => invoke<{ id: string; mb: number; downloaded: boolean }[]>("matte_models"),
+  downloadMatteModel: (id: string) => invoke<void>("download_matte_model", { id }),
+  prepareMatte: (clipId: string) => invoke<void>("prepare_matte", { clipId }),
+  trackMask: (clipId: string, from: number, x: number, y: number, w: number, h: number) =>
+    invoke<void>("track_mask", { clipId, from, x, y, w, h }),
+  scopes: (index: number) => invoke<ArrayBuffer>("scopes", { index }),
+  silences: (path: string, threshold: number, minSeconds: number) =>
+    invoke<[number, number][]>("silences", { path, threshold, minSeconds }),
   brand: () => invoke<Brand | null>("get_brand"),
   setBrand: (brand: Brand) => invoke<void>("set_brand", { brand }),
   cancelExport: () => invoke<void>("cancel_export"),

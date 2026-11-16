@@ -219,3 +219,33 @@ pub fn make_proxy(src: &Path, out: &Path) -> Result<()> {
     std::fs::rename(&tmp, out)?;
     Ok(())
 }
+
+/// Quiet stretches in a file's sound, as (start, end) in seconds: where the
+/// level stays below `threshold_db` for at least `min_seconds`.
+pub fn silences(path: &Path, threshold_db: f32, min_seconds: f32) -> Result<Vec<(f64, f64)>> {
+    let out = command(ffmpeg_path())
+        .args(["-hide_banner", "-nostats", "-nostdin", "-i"])
+        .arg(path)
+        .args(["-vn", "-af", &format!("silencedetect=noise={threshold_db}dB:d={min_seconds}"), "-f", "null", "-"])
+        .output()
+        .map_err(Error::FfmpegMissing)?;
+    let text = String::from_utf8_lossy(&out.stderr);
+    let mut spans = vec![];
+    let mut open: Option<f64> = None;
+    for line in text.lines() {
+        let num = |key: &str| line.split(key).nth(1).and_then(|r| r.split_whitespace().next()).and_then(|v| v.parse::<f64>().ok());
+        if let Some(s) = num("silence_start: ") {
+            open = Some(s.max(0.0));
+        } else if let (Some(e), Some(s)) = (num("silence_end: "), open) {
+            spans.push((s, e));
+            open = None;
+        }
+    }
+    if let Some(s) = open {
+        // Quiet until the end of the file.
+        if let Ok(info) = probe(path) {
+            spans.push((s, info.duration));
+        }
+    }
+    Ok(spans)
+}

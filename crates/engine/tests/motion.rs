@@ -212,7 +212,7 @@ fn reframing_a_reel_to_landscape_fills_the_new_frame() {
     p.track_mut(TrackKind::Video).clips.push(bg);
     let mut logo = Clip::new("logo", MediaKind::Image, &wide, 0, 30, 0.0);
     logo.transform = Transform { scale: 0.2, x: 0.35, y: -0.4, opacity: 1.0 };
-    p.tracks.push(engine::Track { id: "v2".into(), kind: TrackKind::Video, muted: false, hidden: false, locked: false, clips: vec![logo] });
+    p.tracks.push(engine::Track { id: "v2".into(), kind: TrackKind::Video, muted: false, hidden: false, locked: false, duck: false, clips: vec![logo] });
 
     let land = p.reframed(1920, 1080, true, size);
     assert_eq!((land.width, land.height), (1920, 1080));

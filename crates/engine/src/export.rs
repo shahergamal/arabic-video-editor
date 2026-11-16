@@ -35,6 +35,7 @@ fn audio_graph(project: &Project, first_input: usize) -> (Vec<&crate::project::C
         .collect();
     let total_seconds = project.fps.frame_to_seconds(project.duration());
     let mut graph = String::new();
+    let (mut music, mut speech) = (vec![], vec![]);
     for (i, clip) in audio_inputs.iter().enumerate() {
         let start = clip.source_in;
         let dur = project.fps.frame_to_seconds(clip.duration);
@@ -47,23 +48,51 @@ fn audio_graph(project: &Project, first_input: usize) -> (Vec<&crate::project::C
             let d = project.fps.frame_to_seconds(clip.fade_out);
             fades += &format!(",afade=t=out:st={:.6}:d={d:.6}", (dur - d).max(0.0));
         }
+        let mut clean = String::new();
+        if clip.audio_fx.denoise {
+            // Learns the steady noise and takes it out.
+            clean += "afftdn=nr=18:nf=-30:tn=1,";
+        }
+        if clip.audio_fx.voice {
+            // Cut rumble and hiss, bring the voice forward, even out loud and soft words.
+            clean += "highpass=f=85,lowpass=f=14000,equalizer=f=250:t=q:w=1.2:g=-2,\
+                      equalizer=f=3200:t=q:w=1.0:g=3,acompressor=threshold=-22dB:ratio=3:attack=8:release=120:makeup=3,";
+        }
         let speed = clip.speed.clamp(0.1, 10.0) as f64;
         let src_dur = dur * speed;
         graph += &format!(
             "[{n}:a]atrim=start={start:.6}:duration={src_dur:.6},asetpts=PTS-STARTPTS,{tempo}\
-             aresample=48000,volume={vol}{fades},adelay={delay_ms}:all=1[a{i}];",
+             aresample=48000,{clean}volume={vol}{fades},adelay={delay_ms}:all=1[a{i}];",
             tempo = atempo(speed),
             n = i + first_input,
             vol = clip.volume
         );
+        if project.is_ducked(&clip.id) {
+            music.push(i);
+        } else {
+            speech.push(i);
+        }
     }
-    for i in 0..audio_inputs.len() {
-        graph += &format!("[a{i}]");
-    }
-    graph += &format!(
-        "amix=inputs={}:normalize=0:duration=longest,apad,atrim=duration={total_seconds:.6}[aout]",
-        audio_inputs.len()
-    );
+    let mix = |ids: &[usize], out: &str| -> String {
+        let ins: String = ids.iter().map(|i| format!("[a{i}]")).collect();
+        format!("{ins}amix=inputs={}:normalize=0:duration=longest[{out}];", ids.len())
+    };
+    let pre = if !music.is_empty() && !speech.is_empty() {
+        // Music gets quieter by itself whenever someone speaks.
+        graph += &mix(&speech, "sp");
+        graph += &mix(&music, "mu");
+        graph += "[sp]asplit=2[sp1][sp2];[mu][sp2]sidechaincompress=threshold=0.02:ratio=10:attack=30:release=500:makeup=1[duck];";
+        graph += "[sp1][duck]amix=inputs=2:normalize=0:duration=longest[mix];";
+        "mix"
+    } else {
+        graph += &mix(if music.is_empty() { &speech } else { &music }, "mix");
+        "mix"
+    };
+    let loud = project
+        .loudness
+        .map(|l| format!("loudnorm=I={l:.1}:TP=-1.5:LRA=11,aresample=48000,"))
+        .unwrap_or_default();
+    graph += &format!("[{pre}]{loud}apad,atrim=duration={total_seconds:.6}[aout]");
     (audio_inputs, graph)
 }
 

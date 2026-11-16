@@ -172,6 +172,11 @@ export function Timeline({ project, frame, selected, onSeek, onSelect, onCommit 
           <button className={tr.muted ? "on" : ""} title={t("mute")} onClick={() => setTrack(tr, { muted: !tr.muted })}>
             M
           </button>
+          {tr.kind === "audio" && (
+            <button className={tr.duck ? "on" : ""} title={t("duckTitle")} onClick={() => setTrack(tr, { duck: !tr.duck })}>
+              ↓♪
+            </button>
+          )}
           {tr.kind === "video" && (
             <button className={tr.hidden ? "on" : ""} title={t("hide")} onClick={() => setTrack(tr, { hidden: !tr.hidden })}>
               H

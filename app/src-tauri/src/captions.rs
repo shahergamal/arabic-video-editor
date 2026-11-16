@@ -28,9 +28,9 @@ const BASE_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/mai
 
 #[derive(Serialize)]
 pub struct ModelInfo {
-    id: String,
-    mb: u32,
-    downloaded: bool,
+    pub id: String,
+    pub mb: u32,
+    pub downloaded: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -41,16 +41,16 @@ pub struct Segment {
 }
 
 #[derive(Serialize, Clone)]
-struct Progress {
-    done: u64,
-    total: u64,
+pub struct Progress {
+    pub done: u64,
+    pub total: u64,
 }
 
 #[derive(Serialize, Clone)]
-struct Finished<T: Serialize + Clone> {
-    ok: bool,
-    message: String,
-    result: Option<T>,
+pub struct Finished<T: Serialize + Clone> {
+    pub ok: bool,
+    pub message: String,
+    pub result: Option<T>,
 }
 
 fn model_path(state: &State, m: &Model) -> PathBuf {
@@ -78,51 +78,56 @@ pub fn download_model(app: AppHandle, state: tauri::State<State>, id: String) ->
     let dest = model_path(&state, m);
     let cancel = state.cancel.clone();
     cancel.store(false, Ordering::Relaxed);
+    let url = format!("{BASE_URL}{}", m.file);
     std::thread::spawn(move || {
-        let res = (|| -> Result<(), String> {
-            std::fs::create_dir_all(dest.parent().unwrap()).map_err(|e| e.to_string())?;
-            let part = dest.with_extension("part");
-            let resp = ureq::get(&format!("{BASE_URL}{}", m.file)).call().map_err(|e| e.to_string())?;
-            let total: u64 = resp
-                .headers()
-                .get("content-length")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(m.mb as u64 * 1_000_000);
-            let mut body = resp.into_body().into_reader();
-            let mut out = std::fs::File::create(&part).map_err(|e| e.to_string())?;
-            let mut buf = vec![0u8; 1 << 16];
-            let (mut done, mut last) = (0u64, std::time::Instant::now());
-            loop {
-                if cancel.load(Ordering::Relaxed) {
-                    drop(out);
-                    let _ = std::fs::remove_file(&part);
-                    return Err("cancelled".into());
-                }
-                let n = body.read(&mut buf).map_err(|e| e.to_string())?;
-                if n == 0 {
-                    break;
-                }
-                out.write_all(&buf[..n]).map_err(|e| e.to_string())?;
-                done += n as u64;
-                if last.elapsed().as_millis() > 200 {
-                    last = std::time::Instant::now();
-                    let _ = app.emit("model-progress", Progress { done, total });
-                }
-            }
-            out.sync_all().map_err(|e| e.to_string())?;
-            if done < total {
-                let _ = std::fs::remove_file(&part);
-                return Err(format!("download stopped early ({done} of {total} bytes)"));
-            }
-            std::fs::rename(&part, &dest).map_err(|e| e.to_string())
-        })();
+        let res = download_to(&app, &url, &dest, &cancel, m.mb, "model-progress");
         let _ = app.emit(
             "model-finished",
             Finished::<()> { ok: res.is_ok(), message: res.err().unwrap_or_default(), result: None },
         );
     });
     Ok(())
+}
+
+/// Downloads `url` to `dest`, reporting progress as `event`. Written to a
+/// temporary name first, so a broken download is never mistaken for a file.
+pub fn download_to(app: &AppHandle, url: &str, dest: &std::path::Path, cancel: &std::sync::atomic::AtomicBool, mb: u32, event: &str) -> Result<(), String> {
+    std::fs::create_dir_all(dest.parent().unwrap()).map_err(|e| e.to_string())?;
+    let part = dest.with_extension("part");
+    let resp = ureq::get(url).call().map_err(|e| e.to_string())?;
+    let total: u64 = resp
+        .headers()
+        .get("content-length")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(mb as u64 * 1_000_000);
+    let mut body = resp.into_body().into_reader();
+    let mut out = std::fs::File::create(&part).map_err(|e| e.to_string())?;
+    let mut buf = vec![0u8; 1 << 16];
+    let (mut done, mut last) = (0u64, std::time::Instant::now());
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            drop(out);
+            let _ = std::fs::remove_file(&part);
+            return Err("cancelled".into());
+        }
+        let n = body.read(&mut buf).map_err(|e| e.to_string())?;
+        if n == 0 {
+            break;
+        }
+        out.write_all(&buf[..n]).map_err(|e| e.to_string())?;
+        done += n as u64;
+        if last.elapsed().as_millis() > 200 {
+            last = std::time::Instant::now();
+            let _ = app.emit(event, Progress { done, total });
+        }
+    }
+    out.sync_all().map_err(|e| e.to_string())?;
+    if done < total {
+        let _ = std::fs::remove_file(&part);
+        return Err(format!("download stopped early ({done} of {total} bytes)"));
+    }
+    std::fs::rename(&part, dest).map_err(|e| e.to_string())
 }
 
 /// Listens to the whole timeline and writes down what is said, with times.

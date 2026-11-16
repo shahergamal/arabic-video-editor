@@ -30,6 +30,45 @@ export interface Clip {
   adjust?: Adjust;
   keyframes?: Keyframe[];
   transition_in?: Transition | null;
+  remove_bg?: "people" | "objects" | null;
+  chroma?: ChromaKey | null;
+  mask?: Mask | null;
+  speed_ramp?: SpeedPoint[];
+  audio_fx?: AudioFx;
+}
+
+export interface ChromaKey {
+  color: [number, number, number];
+  strength: number;
+  softness: number;
+}
+
+export interface MaskPoint {
+  frame: number;
+  x: number;
+  y: number;
+}
+
+export interface Mask {
+  shape: "rect" | "ellipse";
+  mode: "keep" | "cut" | "blur";
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  feather: number;
+  blur: number;
+  path?: MaskPoint[];
+}
+
+export interface SpeedPoint {
+  frame: number;
+  speed: number;
+}
+
+export interface AudioFx {
+  denoise: boolean;
+  voice: boolean;
 }
 
 export interface Adjust {
@@ -37,6 +76,12 @@ export interface Adjust {
   contrast: number;
   saturation: number;
   temperature: number;
+  shadows?: number;
+  highlights?: number;
+  tint?: number;
+  vignette?: number;
+  lut?: string | null;
+  lut_strength?: number;
 }
 
 export interface Keyframe {
@@ -65,6 +110,7 @@ export interface Track {
   muted: boolean;
   hidden: boolean;
   locked: boolean;
+  duck?: boolean;
   clips: Clip[];
 }
 
@@ -99,6 +145,7 @@ export interface Project {
   fps: Fps;
   tracks: Track[];
   texts: TextLayer[];
+  loudness?: number | null;
 }
 
 export interface MediaInfo {
@@ -146,7 +193,7 @@ export const FORMATS = [
 
 export function newProject(name: string, width: number, height: number): Project {
   return {
-    version: 3,
+    version: 4,
     name,
     width,
     height,

@@ -20,7 +20,7 @@ type State =
 const sameShape = (a: { width: number; height: number }, b: { width: number; height: number }) =>
   Math.abs(a.width * b.height - a.height * b.width) <= Math.max(a.width, a.height);
 
-export function ExportDialog({ project, onClose }: { project: Project; onClose: () => void }) {
+export function ExportDialog({ project, onClose, onLoudness }: { project: Project; onClose: () => void; onLoudness: (v: number | null) => void }) {
   const t = useT();
   const [crf, setCrf] = useState(21);
   const [scale, setScale] = useState(1);
@@ -98,6 +98,10 @@ export function ExportDialog({ project, onClose }: { project: Project; onClose: 
                 </label>
               </>
             )}
+            <label className="check">
+              <input type="checkbox" checked={project.loudness != null} onChange={(e) => onLoudness(e.target.checked ? -14 : null)} />
+              {t("loudnessOpt")}
+            </label>
             <p className="muted" dir="ltr">
               MP4 · H.264 · AAC · {Math.round(project.fps.num / project.fps.den)} fps
             </p>

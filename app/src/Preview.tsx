@@ -24,7 +24,7 @@ function previewSize(p: Project, boxW: number, boxH: number) {
 
 /** Clips you can hear, with their track's mute applied. */
 const audible = (p: Project): Clip[] =>
-  p.tracks.filter((t) => !t.muted).flatMap((t) => t.clips.filter((c) => c.media !== "image" && c.volume > 0));
+  p.tracks.filter((t) => !t.muted).flatMap((t) => t.clips.filter((c) => c.media !== "image" && c.volume > 0 && !c.speed_ramp?.length));
 
 /** Loudness of a clip at a frame, with its fades. The browser caps volume at 1. */
 function gainAt(c: Clip, frame: number) {

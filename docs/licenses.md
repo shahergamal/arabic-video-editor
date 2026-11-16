@@ -21,3 +21,10 @@ Before selling the app:
 ## Interface
 All interface design, icons and future templates/effects are original to this
 project. Nothing is copied from CapCut, Premiere or any other editor.
+
+## Downloaded on request (not bundled)
+
+| What | Licence | Where from |
+| --- | --- | --- |
+| Whisper speech models (ggml) | MIT | huggingface.co/ggerganov/whisper.cpp |
+| U²-Net / U²-Net-p / U²-Net human segmentation (ONNX) | Apache-2.0 | github.com/danielgatis/rembg releases |

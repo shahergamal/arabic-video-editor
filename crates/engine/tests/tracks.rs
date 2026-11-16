@@ -38,7 +38,7 @@ fn picture_in_picture_sits_on_top_where_placed() {
     p.track_mut(TrackKind::Video).clips.push(Clip::new("bg", MediaKind::Image, &red, 0, 30, 0.0));
     let mut small = Clip::new("pip", MediaKind::Image, &blue, 0, 30, 0.0);
     small.transform = Transform { scale: 0.25, x: 0.25, y: -0.25, opacity: 1.0 };
-    p.tracks.push(engine::Track { id: "v2".into(), kind: TrackKind::Video, muted: false, hidden: false, locked: false, clips: vec![small] });
+    p.tracks.push(engine::Track { id: "v2".into(), kind: TrackKind::Video, muted: false, hidden: false, locked: false, duck: false, clips: vec![small] });
 
     let mut c = Compositor::new(None);
     let f = c.render(&p, 0, 320, 180).unwrap();

@@ -26,7 +26,38 @@ export interface Clip {
   transform: Transform;
   fade_in: number;
   fade_out: number;
+  speed?: number;
+  adjust?: Adjust;
+  keyframes?: Keyframe[];
+  transition_in?: Transition | null;
 }
+
+export interface Adjust {
+  brightness: number;
+  contrast: number;
+  saturation: number;
+  temperature: number;
+}
+
+export interface Keyframe {
+  /** Frames from the clip's start. */
+  frame: number;
+  transform: Transform;
+}
+
+export type TransitionKind = "dissolve" | "black" | "slide" | "wipe" | "zoom";
+export interface Transition {
+  kind: TransitionKind;
+  frames: number;
+}
+
+export type TextAnimKind = "none" | "fade" | "rise" | "pop" | "zoom" | "words";
+export interface TextAnim {
+  kind: TextAnimKind;
+  frames: number;
+}
+
+export const NEUTRAL: Adjust = { brightness: 0, contrast: 0, saturation: 0, temperature: 0 };
 
 export interface Track {
   id: string;
@@ -56,6 +87,8 @@ export interface TextLayer {
   align: "center" | "right" | "left";
   start: number;
   duration: number;
+  anim_in?: TextAnim | null;
+  anim_out?: TextAnim | null;
 }
 
 export interface Project {
@@ -113,7 +146,7 @@ export const FORMATS = [
 
 export function newProject(name: string, width: number, height: number): Project {
   return {
-    version: 2,
+    version: 3,
     name,
     width,
     height,
@@ -177,3 +210,11 @@ export function mediaKindOf(path: string): MediaKind {
   if (AUDIO_EXT.includes(ext)) return "audio";
   return "video";
 }
+
+/** Your brand: colours, the main font and a logo. */
+export interface Brand {
+  colors: string[];
+  font: string | null;
+  logo: string | null;
+}
+export const EMPTY_BRAND: Brand = { colors: [], font: null, logo: null };

@@ -11,12 +11,14 @@ use tauri::ipc::Response;
 use tauri::{AppHandle, Emitter};
 
 pub struct State {
-    bundled_fonts: Option<PathBuf>,
-    user_fonts: PathBuf,
-    data_dir: PathBuf,
-    project: Mutex<Option<Project>>,
-    preview: Mutex<Compositor>,
-    cancel: Arc<AtomicBool>,
+    pub(crate) bundled_fonts: Option<PathBuf>,
+    pub(crate) user_fonts: PathBuf,
+    pub(crate) data_dir: PathBuf,
+    pub(crate) project: Mutex<Option<Project>>,
+    pub(crate) preview: Mutex<Compositor>,
+    pub(crate) cancel: Arc<AtomicBool>,
+    /// Videos whose proxy is being made or was looked at already.
+    proxies_seen: Mutex<std::collections::HashSet<PathBuf>>,
 }
 
 impl State {
@@ -30,6 +32,7 @@ impl State {
             data_dir,
             project: Mutex::new(None),
             cancel: Arc::new(AtomicBool::new(false)),
+            proxies_seen: Mutex::new(Default::default()),
         };
         *s.preview.lock().unwrap() = Compositor::with_font_dirs(&s.font_dirs());
         s
@@ -161,8 +164,46 @@ pub fn add_font(state: tauri::State<State>, path: PathBuf) -> Res<()> {
 #[tauri::command]
 pub fn update_project(state: tauri::State<State>, project: Project) -> Res<()> {
     project.save(&state.autosave()).map_err(err)?;
+    prepare_proxies(&state, &project);
     *state.project.lock().unwrap() = Some(project);
     Ok(())
+}
+
+/// Where the proxy of `src` lives: named after the file's path, size and
+/// date, so a changed file gets a new proxy.
+fn proxy_path(state: &State, src: &Path) -> PathBuf {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    src.hash(&mut h);
+    if let Ok(m) = std::fs::metadata(src) {
+        m.len().hash(&mut h);
+        m.modified().ok().hash(&mut h);
+    }
+    state.data_dir.join("proxies").join(format!("{:016x}.mp4", h.finish()))
+}
+
+/// Big videos (above 1080p) get a small copy for the preview, made quietly
+/// in the background the first time they appear on the timeline.
+fn prepare_proxies(state: &State, project: &Project) {
+    let mut seen = state.proxies_seen.lock().unwrap();
+    for (_, clip) in project.all_clips() {
+        if clip.media != engine::MediaKind::Video || seen.contains(&clip.source) {
+            continue;
+        }
+        seen.insert(clip.source.clone());
+        let src = clip.source.clone();
+        let out = proxy_path(state, &src);
+        state.preview.lock().unwrap().proxies.insert(src.clone(), out.clone());
+        if out.exists() {
+            continue;
+        }
+        std::thread::spawn(move || {
+            if probe(&src).map(|i| engine::media::wants_proxy(&i)).unwrap_or(false) {
+                let _ = std::fs::create_dir_all(out.parent().unwrap());
+                let _ = engine::media::make_proxy(&src, &out);
+            }
+        });
+    }
 }
 
 /// After a crash, the last autosaved project (if any).
@@ -260,54 +301,80 @@ pub async fn render_frame(state: tauri::State<'_, State>, index: u64, width: u32
 // ---------- export ----------
 
 #[derive(Clone, Serialize)]
-struct Progress {
-    done: u64,
-    total: u64,
-}
-
-#[derive(Clone, Serialize)]
 struct Finished {
     ok: bool,
     message: String,
 }
 
 #[derive(Deserialize)]
-pub struct ExportRequest {
+pub struct ExportJob {
     path: PathBuf,
-    /// 1.0 = project size, 0.5 = half (faster, smaller file).
-    scale: f32,
+    /// Output size. A different shape from the project reframes the edit.
+    width: u32,
+    height: u32,
     /// x264 quality, 16 (best) to 28 (smallest).
     crf: u8,
+    /// For other shapes: enlarge full-frame pictures to fill the new frame.
+    #[serde(default = "yes")]
+    fill: bool,
 }
 
-/// Exports in the background; progress arrives as "export-progress" events
-/// and the result as one "export-finished" event.
+fn yes() -> bool {
+    true
+}
+
+#[derive(Clone, Serialize)]
+struct JobProgress {
+    job: usize,
+    jobs: usize,
+    done: u64,
+    total: u64,
+}
+
+/// Exports one or more versions, one after another, in the background.
+/// Progress arrives as "export-progress" events and the result as one
+/// "export-finished" event (listing every file made).
 #[tauri::command]
-pub fn start_export(app: AppHandle, state: tauri::State<State>, request: ExportRequest) -> Res<()> {
+pub fn start_export(app: AppHandle, state: tauri::State<State>, jobs: Vec<ExportJob>) -> Res<()> {
     let project = state.project.lock().unwrap().clone().ok_or("no project")?;
     let dirs = state.font_dirs();
     let cancel = state.cancel.clone();
     cancel.store(false, Ordering::Relaxed);
     std::thread::spawn(move || {
         let mut comp = Compositor::with_font_dirs(&dirs);
-        let even = |v: f32| ((v / 2.0).round() as u32 * 2).max(2);
-        let settings = ExportSettings {
-            width: even(project.width as f32 * request.scale),
-            height: even(project.height as f32 * request.scale),
-            crf: request.crf.clamp(10, 35),
-        };
-        let mut last = std::time::Instant::now();
-        let res = export(&project, &mut comp, &settings, &request.path, &cancel, |done, total| {
-            if last.elapsed().as_millis() > 100 || done == total {
-                last = std::time::Instant::now();
-                let _ = app.emit("export-progress", Progress { done, total });
+        let even = |v: u32| (v / 2 * 2).max(2);
+        let count = jobs.len();
+        let mut made = vec![];
+        let mut failure = None;
+        for (n, job) in jobs.into_iter().enumerate() {
+            let (w, h) = (even(job.width), even(job.height));
+            // Same shape: just a size change. Other shape: reframe the edit.
+            let same_shape = (w as u64 * project.height as u64).abs_diff(h as u64 * project.width as u64)
+                <= (project.width.max(project.height) as u64);
+            let version = if same_shape {
+                project.clone()
+            } else {
+                project.reframed(w, h, job.fill, |p| probe(p).ok().map(|i| (i.width, i.height)))
+            };
+            let settings = ExportSettings { width: w, height: h, crf: job.crf.clamp(10, 35) };
+            let mut last = std::time::Instant::now();
+            let res = export(&version, &mut comp, &settings, &job.path, &cancel, |done, total| {
+                if last.elapsed().as_millis() > 100 || done == total {
+                    last = std::time::Instant::now();
+                    let _ = app.emit("export-progress", JobProgress { job: n, jobs: count, done, total });
+                }
+            });
+            match res {
+                Ok(()) => made.push(job.path.display().to_string()),
+                Err(e) => {
+                    failure = Some(e.to_string());
+                    break;
+                }
             }
-        });
-        let msg = match &res {
-            Ok(()) => request.path.display().to_string(),
-            Err(e) => e.to_string(),
-        };
-        let _ = app.emit("export-finished", Finished { ok: res.is_ok(), message: msg });
+        }
+        let ok = failure.is_none();
+        let message = failure.unwrap_or_else(|| made.join("\n"));
+        let _ = app.emit("export-finished", Finished { ok, message });
     });
     Ok(())
 }
@@ -315,4 +382,80 @@ pub fn start_export(app: AppHandle, state: tauri::State<State>, request: ExportR
 #[tauri::command]
 pub fn cancel_export(state: tauri::State<State>) {
     state.cancel.store(true, Ordering::Relaxed);
+}
+
+// ---------- templates and brand ----------
+
+#[derive(Serialize)]
+pub struct TemplateInfo {
+    name: String,
+    path: PathBuf,
+    width: u32,
+    height: u32,
+    texts: usize,
+}
+
+fn templates_dir(state: &State) -> PathBuf {
+    state.data_dir.join("templates")
+}
+
+/// Saves the project's shape, texts, styles and animations as a starting
+/// point for new videos. Media files are not part of a template.
+#[tauri::command]
+pub fn save_template(state: tauri::State<State>, project: Project, name: String) -> Res<()> {
+    let dir = templates_dir(&state);
+    std::fs::create_dir_all(&dir).map_err(err)?;
+    let mut t = project;
+    for tr in &mut t.tracks {
+        tr.clips.clear();
+    }
+    t.name = name.clone();
+    let safe: String = name.chars().map(|c| if c.is_alphanumeric() || c == ' ' || c == '-' { c } else { '_' }).collect();
+    t.save(&dir.join(format!("{}.ave", safe.trim()))).map_err(err)
+}
+
+#[tauri::command]
+pub fn list_templates(state: tauri::State<State>) -> Vec<TemplateInfo> {
+    let mut out: Vec<TemplateInfo> = std::fs::read_dir(templates_dir(&state))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "ave"))
+        .filter_map(|p| {
+            let t = Project::load(&p).ok()?;
+            Some(TemplateInfo { name: t.name.clone(), path: p, width: t.width, height: t.height, texts: t.texts.len() })
+        })
+        .collect();
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
+}
+
+#[tauri::command]
+pub fn delete_template(state: tauri::State<State>, path: PathBuf) -> Res<()> {
+    // Only files inside the templates folder.
+    if path.parent() != Some(templates_dir(&state).as_path()) {
+        return Err("not a template".into());
+    }
+    std::fs::remove_file(path).map_err(err)
+}
+
+#[tauri::command]
+pub fn load_template(path: PathBuf) -> Res<Project> {
+    Project::load(&path).map_err(err)
+}
+
+/// Brand colours, font and logo, kept as free-form JSON for the window.
+#[tauri::command]
+pub fn get_brand(state: tauri::State<State>) -> serde_json::Value {
+    std::fs::read_to_string(state.data_dir.join("brand.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or(serde_json::Value::Null)
+}
+
+#[tauri::command]
+pub fn set_brand(state: tauri::State<State>, brand: serde_json::Value) -> Res<()> {
+    let json = serde_json::to_vec_pretty(&brand).map_err(err)?;
+    std::fs::write(state.data_dir.join("brand.json"), json).map_err(err)
 }

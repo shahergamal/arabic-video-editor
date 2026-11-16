@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { api } from "./api";
+import { api, type TemplateInfo } from "./api";
 import { toggleLanguage, useT } from "./i18n";
 import type { Project, Recent } from "./types";
 import { FORMATS, allClips, fileName } from "./types";
@@ -9,16 +9,19 @@ interface Props {
   onNew: (width: number, height: number) => void;
   onOpen: (path: string) => void;
   onRecover: (p: Project) => void;
+  onTemplate: (p: Project) => void;
 }
 
 /** First screen: start something new, reopen recent work, or recover. */
-export function Home({ onNew, onOpen, onRecover }: Props) {
+export function Home({ onNew, onOpen, onRecover, onTemplate }: Props) {
   const t = useT();
   const [recent, setRecent] = useState<Recent[]>([]);
   const [recovered, setRecovered] = useState<Project | null>(null);
+  const [templates, setTemplates] = useState<TemplateInfo[]>([]);
 
   useEffect(() => {
     api.recent().then(setRecent).catch(() => {});
+    api.templates().then(setTemplates).catch(() => {});
     api
       .recover()
       .then((p) => p && allClips(p).length + p.texts.length > 0 && setRecovered(p))
@@ -68,6 +71,32 @@ export function Home({ onNew, onOpen, onRecover }: Props) {
                 {f.id} · {f.width}×{f.height}
               </span>
             </button>
+          ))}
+        </div>
+      </section>
+
+      <section>
+        <h2>{t("templates")}</h2>
+        {templates.length === 0 && <p className="muted">{t("noTemplates")}</p>}
+        <div className="formats">
+          {templates.map((tp) => (
+            <div key={tp.path} className="template">
+              <button className="format" onClick={() => api.loadTemplate(tp.path).then(onTemplate)}>
+                <span className="shape" style={{ aspectRatio: `${tp.width} / ${tp.height}` }} />
+                <b dir="auto">{tp.name}</b>
+                <span className="muted">
+                  {tp.texts} {t("textsCount")}
+                </span>
+              </button>
+              <button
+                className="icon remove"
+                title={t("deleteTemplate")}
+                aria-label={t("deleteTemplate")}
+                onClick={() => api.deleteTemplate(tp.path).then(() => setTemplates((x) => x.filter((y) => y.path !== tp.path)))}
+              >
+                ×
+              </button>
+            </div>
           ))}
         </div>
       </section>

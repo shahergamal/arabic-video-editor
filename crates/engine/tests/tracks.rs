@@ -108,7 +108,7 @@ fn version_one_projects_open_with_clips_on_a_track() {
     let path = dir.path().join("old.ave");
     std::fs::write(&path, json).unwrap();
     let p = Project::load(&path).unwrap();
-    assert_eq!(p.version, 2);
+    assert_eq!(p.version, engine::project::FORMAT_VERSION);
     assert!(p.clips.is_empty());
     assert_eq!(p.tracks[0].clips[0].id, "c");
     assert_eq!(p.duration(), 30);

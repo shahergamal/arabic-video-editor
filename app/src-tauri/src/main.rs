@@ -1,6 +1,7 @@
 // Hide the extra console window on Windows release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod captions;
 mod commands;
 
 use std::path::PathBuf;
@@ -40,6 +41,15 @@ fn main() {
             commands::render_frame,
             commands::start_export,
             commands::cancel_export,
+            commands::save_template,
+            commands::list_templates,
+            commands::delete_template,
+            commands::load_template,
+            commands::get_brand,
+            commands::set_brand,
+            captions::caption_models,
+            captions::download_model,
+            captions::transcribe,
         ])
         .run(tauri::generate_context!())
         .expect("failed to start the app");

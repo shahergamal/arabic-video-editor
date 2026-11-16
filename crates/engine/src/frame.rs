@@ -16,6 +16,11 @@ impl Frame {
         Self { width, height, data }
     }
 
+    /// A fully see-through frame, for drawing a layer on its own.
+    pub fn transparent(width: u32, height: u32) -> Self {
+        Self { width, height, data: vec![0u8; (width * height * 4) as usize] }
+    }
+
     pub fn byte_len(width: u32, height: u32) -> usize {
         (width * height * 4) as usize
     }
@@ -34,10 +39,19 @@ impl Frame {
         let i = ((y as u32 * self.width + x as u32) * 4) as usize;
         let px = &mut self.data[i..i + 4];
         let inv = 255 - a;
-        for c in 0..3 {
-            px[c] = ((rgba[c] as u32 * a + px[c] as u32 * inv + 127) / 255) as u8;
+        if px[3] == 255 {
+            for c in 0..3 {
+                px[c] = ((rgba[c] as u32 * a + px[c] as u32 * inv + 127) / 255) as u8;
+            }
+            return;
         }
-        px[3] = 255;
+        // See-through pixel underneath: proper "over" with both alphas.
+        let da = px[3] as u32 * inv / 255;
+        let out = a + da;
+        for c in 0..3 {
+            px[c] = ((rgba[c] as u32 * a + px[c] as u32 * da + out / 2) / out) as u8;
+        }
+        px[3] = out.min(255) as u8;
     }
 
     pub fn save_png(&self, path: &std::path::Path) -> crate::Result<()> {

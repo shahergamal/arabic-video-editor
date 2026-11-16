@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { api, mediaInfo } from "./api";
-import { appendMedia, liftDelete, rippleDelete, splitAt, updateClip } from "./edits";
+import { addTrack, appendMedia, liftDelete, makeClip, place, rippleDelete, splitAt, updateClip } from "./edits";
+import { BrandPanel, useBrand } from "./BrandPanel";
 import { ExportDialog } from "./ExportDialog";
 import { FontsPanel } from "./FontsPanel";
 import { registerFontFaces } from "./fontFaces";
@@ -11,13 +12,14 @@ import { Home } from "./Home";
 import { toggleLanguage, useT } from "./i18n";
 import { MediaPanel, toItems, type MediaItem } from "./MediaPanel";
 import { Preview } from "./Preview";
+import { CaptionsPanel } from "./CaptionsPanel";
 import { ClipProperties, TextProperties } from "./Properties";
 import { TextPresets } from "./TextPresets";
 import { Timeline } from "./Timeline";
 import type { FontInfo, Project, TextLayer } from "./types";
 import { AUDIO_EXT, IMAGE_EXT, VIDEO_EXT, allClips, fileName, formatTime, fpsValue, newId, newProject, normalize, projectDuration } from "./types";
 
-type Tab = "media" | "text" | "fonts";
+type Tab = "media" | "text" | "captions" | "fonts";
 const MEDIA_EXT = new Set([...VIDEO_EXT, ...IMAGE_EXT, ...AUDIO_EXT]);
 
 export function App() {
@@ -34,6 +36,8 @@ export function App() {
   const [tab, setTab] = useState<Tab>("media");
   const [exporting, setExporting] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [brand, setBrand] = useBrand();
+  const [templateName, setTemplateName] = useState<string | null>(null);
 
   const loadFonts = useCallback(() => {
     api
@@ -122,9 +126,22 @@ export function App() {
     [project, frame, commit],
   );
 
+  const addLogo = useCallback(
+    (path: string) => {
+      if (!project) return;
+      const withTrack = addTrack(project, "video");
+      const top = withTrack.tracks.filter((tr) => tr.kind === "video").pop()!;
+      const fps = fpsValue(project.fps);
+      const clip = makeClip(withTrack, path, "image", Math.max(3, projectDuration(project) / fps), 0);
+      commit(place(withTrack, top.id, { ...clip, transform: { scale: 0.18, x: 0.36, y: -0.4, opacity: 1 } }));
+      setSelected(clip.id);
+    },
+    [project, commit],
+  );
+
   const families = useMemo(() => fonts.filter((f) => f.origin !== "system").map((f) => f.family), [fonts]);
   const quickText = useCallback(() => {
-    const family = ["Cairo", "IBM Plex Sans Arabic"].find((f) => families.includes(f)) ?? families[0] ?? "Cairo";
+    const family = [brand.font ?? "", "Cairo", "IBM Plex Sans Arabic"].find((f) => families.includes(f)) ?? families[0] ?? "Cairo";
     addText({
       text: "اكتب هنا",
       font_family: family,
@@ -140,7 +157,7 @@ export function App() {
       background: [0, 0, 0, 0],
       align: "center",
     });
-  }, [addText, families]);
+  }, [addText, families, brand.font]);
 
   const saveProject = useCallback(
     async (as = false) => {
@@ -244,6 +261,7 @@ export function App() {
           onNew={(w, h) => start(newProject(t("untitled"), w, h), null)}
           onOpen={openPath}
           onRecover={(p) => start(p, null)}
+          onTemplate={(p) => start({ ...p, name: t("untitled") }, null)}
         />
         {notice && <div className="toast">{notice}</div>}
       </>
@@ -282,6 +300,7 @@ export function App() {
         <button onClick={() => saveProject()} title="Ctrl+S">
           {t("save")}
         </button>
+        <button onClick={() => setTemplateName(project.name)}>{t("saveTemplate")}</button>
         <button onClick={toggleLanguage}>{t("language")}</button>
         <button
           className="primary"
@@ -307,7 +326,7 @@ export function App() {
 
       <aside className="side left">
         <nav className="tabs" role="tablist">
-          {(["media", "text", "fonts"] as const).map((k) => (
+          {(["media", "text", "captions", "fonts"] as const).map((k) => (
             <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>
               {t(k)}
             </button>
@@ -315,7 +334,13 @@ export function App() {
         </nav>
         <div className="side-scroll">
           {tab === "media" && <MediaPanel items={media} onImport={importPaths} onAdd={addMedia} />}
-          {tab === "text" && <TextPresets families={families} onAdd={addText} />}
+          {tab === "text" && (
+            <>
+              <TextPresets families={families} brandFont={brand.font} onAdd={addText} />
+              <BrandPanel brand={brand} families={families} onChange={setBrand} onAddLogo={addLogo} />
+            </>
+          )}
+          {tab === "captions" && <CaptionsPanel project={project} families={families} onAdd={commit} />}
           {tab === "fonts" && (
             <FontsPanel
               fonts={fonts}
@@ -368,6 +393,7 @@ export function App() {
             <TextProperties
               layer={selText}
               fonts={fonts}
+              swatches={brand.colors}
               fps={fpsValue(project.fps)}
               onChange={(nt) => commit({ ...project, texts: project.texts.map((x) => (x.id === nt.id ? nt : x)) })}
               onDelete={() => deleteSelected(false)}
@@ -377,6 +403,8 @@ export function App() {
             <ClipProperties
               clip={selClip}
               fps={fpsValue(project.fps)}
+              frame={frame}
+              hasBefore={project.tracks.some((tr) => tr.clips.some((c) => c.id === selClip.id) && tr.clips.some((c) => c.id !== selClip.id && c.media !== "audio" && c.start + c.duration === selClip.start))}
               onChange={(c) => commit(updateClip(project, c))}
               onRipple={() => deleteSelected(true)}
               onLift={() => deleteSelected(false)}
@@ -396,6 +424,36 @@ export function App() {
       </section>
 
       {exporting && <ExportDialog project={project} onClose={() => setExporting(false)} />}
+      {templateName !== null && (
+        <div className="modal-back">
+          <form
+            className="modal"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!templateName.trim()) return;
+              api
+                .saveTemplate(project, templateName.trim())
+                .then(() => setNotice(t("templateSaved")))
+                .catch((err) => setNotice(String(err)));
+              setTemplateName(null);
+            }}
+          >
+            <h2>{t("saveTemplate")}</h2>
+            <label>
+              {t("templateName")}
+              <input autoFocus dir="auto" value={templateName} onChange={(e) => setTemplateName(e.target.value)} />
+            </label>
+            <div className="modal-actions">
+              <button className="primary" type="submit">
+                {t("ok")}
+              </button>
+              <button type="button" onClick={() => setTemplateName(null)}>
+                {t("cancel")}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
       {notice && <div className="toast">{notice}</div>}
     </div>
   );

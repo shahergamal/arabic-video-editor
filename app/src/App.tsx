@@ -29,6 +29,10 @@ import { AUDIO_EXT, IMAGE_EXT, VIDEO_EXT, allClips, fileName, formatTime, fpsVal
 
 type Tab = "media" | "text" | "captions" | "auto" | "fonts" | "assistant";
 const MEDIA_EXT = new Set([...VIDEO_EXT, ...IMAGE_EXT, ...AUDIO_EXT]);
+/** Every file the project uses, groups included (group clips are not files). */
+const mediaSources = (p: Project) => [
+  ...new Set([...allClips(p), ...(p.compounds ?? []).flatMap((g) => g.tracks.flatMap((t) => t.clips))].filter((c) => c.media !== "compound").map((c) => c.source)),
+];
 
 export function App() {
   const t = useT();
@@ -87,7 +91,7 @@ export function App() {
       setPath(at);
       setFrame(0);
       setSelected(null);
-      setMedia(toItems([...new Set(allClips(n).map((c) => c.source))]));
+      setMedia(toItems(mediaSources(n)));
       api.missing(n).then(setMissing).catch(() => setMissing([]));
     },
     [reset],
@@ -201,11 +205,12 @@ export function App() {
     for (const old of missing) {
       const picked = await openDialog({ title: fileName(old), filters: [{ name: fileName(old), extensions: [...MEDIA_EXT] }] });
       if (typeof picked !== "string") continue;
-      next = { ...next, tracks: next.tracks.map((tr) => ({ ...tr, clips: tr.clips.map((c) => (c.source === old ? { ...c, source: picked } : c)) })) };
+      const swap = (tr: Project["tracks"][number]) => ({ ...tr, clips: tr.clips.map((c) => (c.source === old ? { ...c, source: picked } : c)) });
+      next = { ...next, tracks: next.tracks.map(swap), compounds: next.compounds?.map((g) => ({ ...g, tracks: g.tracks.map(swap) })) };
     }
     commit(next);
     api.missing(next).then(setMissing);
-    setMedia(toItems([...new Set(allClips(next).map((c) => c.source))]));
+    setMedia(toItems(mediaSources(next)));
   }, [project, missing, commit]);
 
   const selText = project?.texts.find((x) => x.id === selected) ?? null;

@@ -70,3 +70,50 @@ Status: step 0 ✓ (PR #1), phase 1 ✓ (PR #2), phase 2 ✓ (PR #3), phase 3 �
     says which of these were left out.
 - **Plugins:** data only (looks, LUTs, text styles, fonts); see
   [plugins.md](plugins.md).
+
+## Phase 5 notes
+
+- **Picture tools:** rotation (keyframed), mirror, crop, and blend modes
+  (multiply, screen, overlay, add, darken, lighten). Order per clip: colour
+  (wheels → curves → LUT) → green screen → cut-out → mask → crop → mirror →
+  position/size/rotation → blend.
+- **Time tools:** freeze frame (F), play backwards, and steadying (ffmpeg
+  vidstab, falling back to deshake). Backwards and steadied clips play from a
+  working copy kept in the app's data folder; the original file is never
+  touched. Backwards clips are silent in the live preview but have sound in
+  the export.
+- **Colour:** curves (master, red, green, blue; monotone cubic so they never
+  wiggle back) and three colour wheels (shadows, midtones, highlights).
+- **Shapes and stickers:** rectangle, circle, line, arrow and star, drawn with
+  smooth edges, with the same animations as texts plus "draw" for lines and
+  arrows. Stickers are ready-made shape recipes.
+- **Groups:** several clips become one group clip (Ctrl+G) that moves, trims
+  and fades as one, and can be taken apart again (Ctrl+Shift+G). Groups are
+  flattened when exchanging timelines with Premiere/Resolve.
+- **Editing:** copy, paste, duplicate, many clips at once (Ctrl/Shift+click),
+  detach audio, close gaps, slip (Alt+drag the middle), roll (Alt+drag an
+  edge), J/K/L playback, markers (M), and ↑/↓ to jump between cuts and
+  markers.
+- **Sound:** voice-over recording from the microphone, saved as WAV in the
+  app's data folder. Captions can be translated to English while listening
+  (Whisper translate).
+- **Beats:** onset strength → tempo by autocorrelation → beat tracking by
+  dynamic programming. "Cut to the beat" retimes a track's clips so every cut
+  lands on a beat and no clip runs past its file.
+- **Follow the subject:** for another shape (e.g. 16:9 → 9:16), the person is
+  found with the cut-out model four times a second, the path is smoothed and
+  simplified, and becomes position keyframes.
+- **Graphics-card export:** NVIDIA, Intel, AMD and Apple encoders are tried
+  once with a tiny test; if the real export fails it reruns on the processor.
+- **Automatic edit:** each shot is scored for sharpness, light, motion and
+  shake; the idea is turned into a plan (shots, order, length, texts, music)
+  by built-in rules (free), a small local model through llama.cpp (free,
+  offline after one download), or Claude Haiku with the user's key (shows the
+  cost first, keeps to a monthly limit, sends text only). The plan is checked
+  and repaired before it becomes a normal, editable project.
+- **Publishing:** Facebook (post, reel, story), Instagram (post, reel,
+  story) and TikTok, through the user's own developer apps, uploaded only
+  when Publish is pressed. Without connected accounts the app exports the
+  right shapes, copies the caption and opens the sites. See
+  [publishing-ar.md](publishing-ar.md).
+- **Updates:** the home screen says when a newer release is out.

@@ -205,7 +205,7 @@ pub fn open_url(url: &str) -> Result<(), String> {
     let r = std::process::Command::new("open").arg(url).spawn();
     #[cfg(all(unix, not(target_os = "macos")))]
     let r = std::process::Command::new("xdg-open").arg(url).spawn();
-    r.map(|_| ()).map_err(|e| e.to_string())
+    r.map(|_| ()).map_err(|e| format!("could not open the web browser ({e}); open this address yourself: {url}"))
 }
 
 pub fn meta_auth_url(app_id: &str, state: &str) -> String {

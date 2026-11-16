@@ -72,8 +72,8 @@ fn double_speed_shows_every_other_source_frame() {
 fn keyframes_move_smoothly_between_points() {
     let mut c = Clip::new("c", MediaKind::Image, "x.png", 100, 60, 0.0);
     c.keyframes = vec![
-        Keyframe { frame: 0, transform: Transform { scale: 1.0, x: 0.0, y: 0.0, opacity: 1.0 } },
-        Keyframe { frame: 30, transform: Transform { scale: 1.5, x: 0.2, y: 0.0, opacity: 1.0 } },
+        Keyframe { frame: 0, transform: Transform { scale: 1.0, x: 0.0, y: 0.0, opacity: 1.0, rotation: 0.0 } },
+        Keyframe { frame: 30, transform: Transform { scale: 1.5, x: 0.2, y: 0.0, opacity: 1.0, rotation: 0.0 } },
     ];
     assert_eq!(c.transform_at(90).scale, 1.0);
     assert_eq!(c.transform_at(100).scale, 1.0);
@@ -211,7 +211,7 @@ fn reframing_a_reel_to_landscape_fills_the_new_frame() {
     bg.transform.scale = cover_tall;
     p.track_mut(TrackKind::Video).clips.push(bg);
     let mut logo = Clip::new("logo", MediaKind::Image, &wide, 0, 30, 0.0);
-    logo.transform = Transform { scale: 0.2, x: 0.35, y: -0.4, opacity: 1.0 };
+    logo.transform = Transform { scale: 0.2, x: 0.35, y: -0.4, opacity: 1.0, rotation: 0.0 };
     p.tracks.push(engine::Track { id: "v2".into(), kind: TrackKind::Video, muted: false, hidden: false, locked: false, duck: false, clips: vec![logo] });
 
     let land = p.reframed(1920, 1080, true, size);

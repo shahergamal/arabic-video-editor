@@ -5,7 +5,7 @@ use crate::frame::Frame;
 use crate::media::{read_still, FrameReader};
 use crate::lut::Lut;
 use crate::matte::{Matter, SIZE as MATTE_SIZE};
-use crate::project::{Adjust, ChromaKey, Clip, Mask, MediaKind, Project, TextAnim, TextLayer, Transform};
+use crate::project::{Adjust, ChromaKey, Clip, Crop, Curves, Mask, MediaKind, Project, TextAnim, TextLayer, Transform};
 use std::sync::Arc;
 use crate::text::TextRenderer;
 use crate::Result;
@@ -26,6 +26,11 @@ pub struct Compositor {
     pub mattes: Option<MatteSetup>,
     luts: HashMap<PathBuf, Option<Arc<Lut>>>,
     sizes: HashMap<PathBuf, (u32, u32)>,
+    /// Folder of working copies (steadied / reversed files), see `derive`.
+    pub copies: Option<PathBuf>,
+    /// Make missing working copies on the spot (export). The preview leaves
+    /// this off and shows the original until the copy is ready.
+    pub make_copies: bool,
 }
 
 /// Background removal: masks are worked out once per source frame and kept
@@ -82,6 +87,8 @@ struct OpenReader {
     /// number of source frames read since.
     open_t: f64,
     src_next: u64,
+    /// The file actually read (original, proxy or working copy).
+    file: PathBuf,
 }
 
 impl Compositor {
@@ -103,6 +110,8 @@ impl Compositor {
             mattes: None,
             luts: HashMap::new(),
             sizes: HashMap::new(),
+            copies: None,
+            make_copies: false,
         }
     }
 
@@ -110,15 +119,63 @@ impl Compositor {
     /// Playing frames in order is fast; jumping around reopens the files.
     pub fn render(&mut self, project: &Project, index: u64, width: u32, height: u32) -> Result<Frame> {
         let mut canvas = Frame::new(width, height);
-        let layers: Vec<(Clip, Option<(String, f32)>)> = project
+        let mut used = vec![];
+        self.draw_tracks(&mut canvas, project, &project.tracks, index, "", &mut used, 0)?;
+        // Close files that are no longer on screen.
+        self.readers.retain(|key, _| used.contains(key));
+
+        for shape in project.shapes.iter().filter(|s| index >= s.start && index < s.start + s.duration) {
+            crate::shapes::draw(&mut canvas, shape, index);
+        }
+        for layer in project.texts.iter().filter(|t| index >= t.start && index < t.start + t.duration) {
+            self.draw_text(&mut canvas, layer, index);
+        }
+        Ok(canvas)
+    }
+
+    /// The file a clip reads: its working copy when it needs one, else a
+    /// preview proxy when there is one, else the original.
+    pub fn source_file(&mut self, clip: &Clip) -> Result<PathBuf> {
+        if crate::derive::needs_copy(clip) {
+            if let Some(dir) = &self.copies {
+                let p = crate::derive::copy_path(dir, clip);
+                if p.exists() {
+                    return Ok(p);
+                }
+                if self.make_copies {
+                    return crate::derive::ensure_copy(dir, clip, &std::sync::atomic::AtomicBool::new(false), &mut |_| {});
+                }
+            }
+            return Ok(clip.source.clone());
+        }
+        Ok(self.proxies.get(&clip.source).filter(|p| p.exists()).cloned().unwrap_or_else(|| clip.source.clone()))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn draw_tracks(
+        &mut self,
+        canvas: &mut Frame,
+        project: &Project,
+        tracks: &[crate::project::Track],
+        index: u64,
+        prefix: &str,
+        used: &mut Vec<String>,
+        depth: u32,
+    ) -> Result<()> {
+        let (width, height) = (canvas.width, canvas.height);
+        let view = Project { tracks: tracks.to_vec(), texts: vec![], shapes: vec![], ..Project::new("", width, height, project.fps) };
+        let layers: Vec<(Clip, Option<(String, f32)>)> = view
             .layers_at(index)
             .into_iter()
             .map(|l| (l.clip.clone(), l.transition.map(|(t, p)| (t.kind.clone(), p))))
             .collect();
         for (clip, transition) in &layers {
+            let key = format!("{prefix}{}", clip.id);
+            used.push(key.clone());
             let picture = match clip.media {
                 MediaKind::Image => Some(self.still(&clip.source, width, height)?),
-                _ => self.video_frame(project, clip, index, width, height)?,
+                MediaKind::Compound => self.group_frame(project, clip, index, width, height, &key, used, depth)?,
+                _ => self.video_frame(project, clip, &key, index, width, height)?,
             };
             let Some(mut p) = picture else { continue };
             if !clip.adjust.is_neutral() {
@@ -136,6 +193,13 @@ impl Compositor {
             if let Some(m) = &clip.mask {
                 apply_mask(&mut p, m, index.min(clip.end().saturating_sub(1)).saturating_sub(clip.start));
             }
+            if !clip.crop.is_none() {
+                let rect = if clip.media == MediaKind::Compound { (0, 0, width, height) } else { self.picture_rect(&clip.source, width, height) };
+                apply_crop(&mut p, &clip.crop, rect);
+            }
+            if clip.flip_h || clip.flip_v {
+                flip(&mut p, clip.flip_h, clip.flip_v);
+            }
             let mut t = clip.transform_at(index);
             let mut reveal_from = 0.0;
             if let Some((kind, raw)) = transition {
@@ -143,7 +207,7 @@ impl Compositor {
                 match kind.as_str() {
                     "black" => {
                         // Out to black, then in from black.
-                        fill_black(&mut canvas, (e * 2.0).min(1.0));
+                        fill_black(canvas, (e * 2.0).min(1.0));
                         if e < 0.5 {
                             continue;
                         }
@@ -160,15 +224,25 @@ impl Compositor {
                     _ => t.opacity *= e,
                 }
             }
-            draw_layer_from(&mut canvas, &p, &t, reveal_from);
+            draw_layer_blend(canvas, &p, &t, reveal_from, Blend::parse(&clip.blend));
         }
-        // Close files that are no longer on screen.
-        self.readers.retain(|id, _| layers.iter().any(|(c, _)| &c.id == id));
+        Ok(())
+    }
 
-        for layer in project.texts.iter().filter(|t| index >= t.start && index < t.start + t.duration) {
-            self.draw_text(&mut canvas, layer, index);
+    /// The picture of a group clip: the group's own tracks, drawn on a
+    /// see-through frame.
+    #[allow(clippy::too_many_arguments)]
+    fn group_frame(&mut self, project: &Project, clip: &Clip, index: u64, w: u32, h: u32, key: &str, used: &mut Vec<String>, depth: u32) -> Result<Option<Frame>> {
+        if depth > 8 {
+            return Ok(None);
         }
-        Ok(canvas)
+        let Some(group) = project.compound(&clip.source) else { return Ok(None) };
+        let tracks = group.tracks.clone();
+        let index = index.min(clip.end().saturating_sub(1));
+        let inner = index - clip.start + (clip.source_in * project.fps.as_f64()).round().max(0.0) as u64;
+        let mut frame = Frame::transparent(w, h);
+        self.draw_tracks(&mut frame, project, &tracks, inner, &format!("{key}/"), used, depth + 1)?;
+        Ok(Some(frame))
     }
 
     fn draw_text(&mut self, canvas: &mut Frame, layer: &TextLayer, index: u64) {
@@ -246,9 +320,18 @@ impl Compositor {
     /// Makes the background see-through, using the stored mask for this
     /// moment of the source, or working it out (and storing it) if needed.
     fn cut_out(&mut self, p: &mut Frame, project: &Project, clip: &Clip, model: &str, index: u64) -> Result<()> {
-        let Some(setup) = self.mattes.as_mut() else { return Ok(()) };
+        if self.mattes.is_none() {
+            return Ok(());
+        }
         let t = clip.source_time(index.min(clip.end().saturating_sub(1)), project.fps);
-        let dir = matte_dir(&setup.cache, &clip.source, model);
+        // Masks belong to the file actually shown (a reversed copy has its
+        // pictures in another order).
+        let shown = match (&self.copies, crate::derive::needs_copy(clip)) {
+            (Some(dir), true) => crate::derive::copy_path(dir, clip),
+            _ => clip.source.clone(),
+        };
+        let setup = self.mattes.as_mut().expect("checked above");
+        let dir = matte_dir(&setup.cache, &shown, model);
         let file = dir.join(format!("{}.png", matte_key(t)));
         let rect = self.picture_rect(&clip.source, p.width, p.height);
         let setup = self.mattes.as_mut().expect("checked above");
@@ -267,28 +350,40 @@ impl Compositor {
         Ok(())
     }
 
-    fn video_frame(&mut self, project: &Project, clip: &Clip, index: u64, w: u32, h: u32) -> Result<Option<Frame>> {
+    fn video_frame(&mut self, project: &Project, clip: &Clip, key: &str, index: u64, w: u32, h: u32) -> Result<Option<Frame>> {
         // During a transition the outgoing clip is asked for frames after its
         // end: show its last frame, held, so the result never depends on
         // whether the file happens to continue.
         let index = index.min(clip.end().saturating_sub(1));
-        if !clip.speed_ramp.is_empty() {
-            return self.ramp_frame(project, clip, index, w, h);
+        let file = self.source_file(clip)?;
+        if clip.freeze {
+            // One picture: read it once and keep it.
+            if let Some(r) = self.readers.get(key).filter(|r| r.clip.source == clip.source && r.clip.source_in == clip.source_in && r.size == (w, h) && r.file == file) {
+                if r.last.is_some() {
+                    return Ok(r.last.clone());
+                }
+            }
+            let mut reader = FrameReader::open(&file, clip.source_in, w, h, project.fps)?;
+            let last = reader.next_frame()?;
+            self.readers.insert(key.to_string(), OpenReader { clip: clip.clone(), size: (w, h), next: 0, reader, last: last.clone(), open_t: clip.source_in, src_next: 0, file });
+            return Ok(last);
         }
-        let reusable = matches!(self.readers.get(&clip.id), Some(r) if r.clip.source == clip.source
+        if !clip.speed_ramp.is_empty() {
+            return self.ramp_frame(project, clip, key, file, index, w, h);
+        }
+        let reusable = matches!(self.readers.get(key), Some(r) if r.clip.source == clip.source && r.file == file
             && r.clip.source_in == clip.source_in && r.clip.start == clip.start && r.clip.speed == clip.speed
             && r.clip.speed_ramp.is_empty() && r.size == (w, h)
             && (index + 1 == r.next || (index >= r.next && index - r.next <= MAX_SKIP)));
         if !reusable {
             let seconds = clip.source_time(index, project.fps);
-            let file = self.proxies.get(&clip.source).filter(|p| p.exists()).unwrap_or(&clip.source);
-            let reader = FrameReader::open_at_speed(file, seconds, w, h, project.fps, clip.speed)?;
+            let reader = FrameReader::open_at_speed(&file, seconds, w, h, project.fps, clip.speed)?;
             self.readers.insert(
-                clip.id.clone(),
-                OpenReader { clip: clip.clone(), size: (w, h), next: index, reader, last: None, open_t: seconds, src_next: 0 },
+                key.to_string(),
+                OpenReader { clip: clip.clone(), size: (w, h), next: index, reader, last: None, open_t: seconds, src_next: 0, file },
             );
         }
-        let r = self.readers.get_mut(&clip.id).expect("reader opened above");
+        let r = self.readers.get_mut(key).expect("reader opened above");
         if r.next == index + 1 {
             // Same frame asked again (e.g. a paused preview redrawing text).
             return Ok(r.last.clone());
@@ -310,22 +405,22 @@ impl Compositor {
 
     /// Speed ramps: the reader runs at normal speed and we pick the source
     /// frame that matches each moment, skipping or repeating frames.
-    fn ramp_frame(&mut self, project: &Project, clip: &Clip, index: u64, w: u32, h: u32) -> Result<Option<Frame>> {
+    #[allow(clippy::too_many_arguments)]
+    fn ramp_frame(&mut self, project: &Project, clip: &Clip, key: &str, file: PathBuf, index: u64, w: u32, h: u32) -> Result<Option<Frame>> {
         let fps = project.fps.as_f64();
         let t = clip.source_time(index, project.fps);
-        let reusable = matches!(self.readers.get(&clip.id), Some(r) if r.clip == *clip && r.size == (w, h) && {
+        let reusable = matches!(self.readers.get(key), Some(r) if r.clip == *clip && r.size == (w, h) && r.file == file && {
             let want = ((t - r.open_t) * fps).round();
             want >= 0.0 && want + 1.0 >= r.src_next as f64 && want <= (r.src_next + MAX_SKIP * 4) as f64
         });
         if !reusable {
-            let file = self.proxies.get(&clip.source).filter(|p| p.exists()).unwrap_or(&clip.source);
-            let reader = FrameReader::open(file, t, w, h, project.fps)?;
+            let reader = FrameReader::open(&file, t, w, h, project.fps)?;
             self.readers.insert(
-                clip.id.clone(),
-                OpenReader { clip: clip.clone(), size: (w, h), next: 0, reader, last: None, open_t: t, src_next: 0 },
+                key.to_string(),
+                OpenReader { clip: clip.clone(), size: (w, h), next: 0, reader, last: None, open_t: t, src_next: 0, file },
             );
         }
-        let r = self.readers.get_mut(&clip.id).expect("reader opened above");
+        let r = self.readers.get_mut(key).expect("reader opened above");
         let want = ((t - r.open_t) * fps).round().max(0.0) as u64;
         if want + 1 == r.src_next {
             return Ok(r.last.clone());
@@ -576,9 +671,11 @@ pub fn apply_adjust(f: &mut Frame, a: &Adjust) {
             // Shadows move the dark end, highlights the bright end.
             y += a.shadows * 0.3 * (1.0 - x) * (1.0 - x);
             y += a.highlights * 0.3 * x * x;
+            let y = wheels(y.clamp(0.0, 1.0), a.lift[ch], a.gamma[ch], a.gain[ch]);
             *v = (y.clamp(0.0, 1.0) * 255.0).round() as u8;
         }
     }
+    apply_curves(&mut lut, &a.curves);
     if a.vignette != 0.0 {
         apply_vignette(f, a.vignette);
     }
@@ -599,6 +696,172 @@ pub fn apply_adjust(f: &mut Frame, a: &Adjust) {
     }
 }
 
+/// Colour wheels for one channel: lift moves the dark end, gain the bright
+/// end, gamma the middle. Values -1 to 1.
+fn wheels(x: f32, lift: f32, gamma: f32, gain: f32) -> f32 {
+    if lift == 0.0 && gamma == 0.0 && gain == 0.0 {
+        return x;
+    }
+    let lifted = x * (1.0 + gain * 0.5) + lift * 0.25 * (1.0 - x);
+    let g = (1.0 + gamma * 0.5).max(0.1);
+    lifted.clamp(0.0, 1.0).powf(1.0 / g)
+}
+
+/// A smooth curve through the points that never wiggles back
+/// (monotone cubic, Fritsch–Carlson), sampled at 256 steps.
+pub fn curve_table(points: &[[f32; 2]]) -> Option<[f32; 256]> {
+    let mut p: Vec<[f32; 2]> = points.iter().map(|q| [q[0].clamp(0.0, 1.0), q[1].clamp(0.0, 1.0)]).collect();
+    if p.iter().all(|q| (q[0] - q[1]).abs() < 1e-4) {
+        return None;
+    }
+    p.sort_by(|a, b| a[0].total_cmp(&b[0]));
+    p.dedup_by(|a, b| (a[0] - b[0]).abs() < 1e-4);
+    if p.first().map(|q| q[0] > 0.0).unwrap_or(true) {
+        p.insert(0, [0.0, if p.is_empty() { 0.0 } else { p[0][1].min(0.0f32.max(p[0][1])) * 0.0 }]);
+    }
+    if p.last().map(|q| q[0] < 1.0).unwrap_or(true) {
+        p.push([1.0, 1.0]);
+    }
+    let n = p.len();
+    let d: Vec<f32> = (0..n - 1).map(|i| (p[i + 1][1] - p[i][1]) / (p[i + 1][0] - p[i][0]).max(1e-6)).collect();
+    let mut m = vec![0f32; n];
+    m[0] = d[0];
+    m[n - 1] = d[n - 2];
+    for i in 1..n - 1 {
+        m[i] = if d[i - 1] * d[i] <= 0.0 { 0.0 } else { (d[i - 1] + d[i]) / 2.0 };
+    }
+    for i in 0..n - 1 {
+        if d[i] == 0.0 {
+            m[i] = 0.0;
+            m[i + 1] = 0.0;
+            continue;
+        }
+        let (a, b) = (m[i] / d[i], m[i + 1] / d[i]);
+        let h = a * a + b * b;
+        if h > 9.0 {
+            let t = 3.0 / h.sqrt();
+            m[i] = t * a * d[i];
+            m[i + 1] = t * b * d[i];
+        }
+    }
+    let mut out = [0f32; 256];
+    let mut k = 0;
+    for (i, o) in out.iter_mut().enumerate() {
+        let x = i as f32 / 255.0;
+        while k < n - 2 && x > p[k + 1][0] {
+            k += 1;
+        }
+        let h = (p[k + 1][0] - p[k][0]).max(1e-6);
+        let t = ((x - p[k][0]) / h).clamp(0.0, 1.0);
+        let (t2, t3) = (t * t, t * t * t);
+        let y = (2.0 * t3 - 3.0 * t2 + 1.0) * p[k][1]
+            + (t3 - 2.0 * t2 + t) * h * m[k]
+            + (-2.0 * t3 + 3.0 * t2) * p[k + 1][1]
+            + (t3 - t2) * h * m[k + 1];
+        *o = y.clamp(0.0, 1.0);
+    }
+    Some(out)
+}
+
+fn apply_curves(lut: &mut [[u8; 256]; 3], c: &Curves) {
+    let look = |t: &Option<[f32; 256]>, v: u8| t.as_ref().map(|t| (t[v as usize] * 255.0).round() as u8).unwrap_or(v);
+    let master = curve_table(&c.master);
+    let each = [curve_table(&c.r), curve_table(&c.g), curve_table(&c.b)];
+    for (ch, table) in lut.iter_mut().enumerate() {
+        for v in table.iter_mut() {
+            *v = look(&each[ch], look(&master, *v));
+        }
+    }
+}
+
+/// Hides the cropped edges of the picture area.
+pub fn apply_crop(f: &mut Frame, c: &Crop, (rx, ry, rw, rh): (u32, u32, u32, u32)) {
+    let (w, h) = (f.width as usize, f.height as usize);
+    let x0 = rx as f32 + c.left.clamp(0.0, 0.95) * rw as f32;
+    let x1 = (rx + rw) as f32 - c.right.clamp(0.0, 0.95) * rw as f32;
+    let y0 = ry as f32 + c.top.clamp(0.0, 0.95) * rh as f32;
+    let y1 = (ry + rh) as f32 - c.bottom.clamp(0.0, 0.95) * rh as f32;
+    for y in 0..h {
+        let cy = y as f32 + 0.5;
+        let vy = ((cy - y0 + 0.5).min(y1 - cy + 0.5)).clamp(0.0, 1.0);
+        for x in 0..w {
+            let cx = x as f32 + 0.5;
+            let vx = ((cx - x0 + 0.5).min(x1 - cx + 0.5)).clamp(0.0, 1.0);
+            let v = vx.min(vy);
+            if v < 1.0 {
+                let i = (y * w + x) * 4 + 3;
+                f.data[i] = (f.data[i] as f32 * v).round() as u8;
+            }
+        }
+    }
+}
+
+/// Mirrors the whole frame (the picture is centred, so it flips in place).
+pub fn flip(f: &mut Frame, horizontal: bool, vertical: bool) {
+    let (w, h) = (f.width as usize, f.height as usize);
+    if horizontal {
+        for row in f.data.chunks_exact_mut(w * 4) {
+            for x in 0..w / 2 {
+                for c in 0..4 {
+                    row.swap(x * 4 + c, (w - 1 - x) * 4 + c);
+                }
+            }
+        }
+    }
+    if vertical {
+        for y in 0..h / 2 {
+            let (top, bottom) = f.data.split_at_mut((h - 1 - y) * w * 4);
+            top[y * w * 4..(y + 1) * w * 4].swap_with_slice(&mut bottom[..w * 4]);
+        }
+    }
+}
+
+/// How a layer mixes with what is under it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Blend {
+    Normal,
+    Multiply,
+    Screen,
+    Overlay,
+    Add,
+    Darken,
+    Lighten,
+}
+
+impl Blend {
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "multiply" => Self::Multiply,
+            "screen" => Self::Screen,
+            "overlay" => Self::Overlay,
+            "add" => Self::Add,
+            "darken" => Self::Darken,
+            "lighten" => Self::Lighten,
+            _ => Self::Normal,
+        }
+    }
+
+    /// The mixed colour of one channel, 0 to 255.
+    #[inline]
+    fn mix(self, s: f32, d: f32) -> f32 {
+        match self {
+            Self::Normal => s,
+            Self::Multiply => s * d / 255.0,
+            Self::Screen => 255.0 - (255.0 - s) * (255.0 - d) / 255.0,
+            Self::Overlay => {
+                if d < 128.0 {
+                    2.0 * s * d / 255.0
+                } else {
+                    255.0 - 2.0 * (255.0 - s) * (255.0 - d) / 255.0
+                }
+            }
+            Self::Add => (s + d).min(255.0),
+            Self::Darken => s.min(d),
+            Self::Lighten => s.max(d),
+        }
+    }
+}
+
 /// Paints `src` (same size as `dst`, with transparency) over `dst`,
 /// scaled, moved and faded by `t`.
 pub fn draw_layer(dst: &mut Frame, src: &Frame, t: &Transform) {
@@ -608,47 +871,68 @@ pub fn draw_layer(dst: &mut Frame, src: &Frame, t: &Transform) {
 /// Like `draw_layer`, but only the part of the frame to the right of
 /// `reveal_from` (a share of the width) is painted.
 pub fn draw_layer_from(dst: &mut Frame, src: &Frame, t: &Transform, reveal_from: f32) {
+    draw_layer_blend(dst, src, t, reveal_from, Blend::Normal);
+}
+
+/// The general form: moved, scaled, turned, faded, partly revealed and
+/// mixed with `blend`.
+pub fn draw_layer_blend(dst: &mut Frame, src: &Frame, t: &Transform, reveal_from: f32, blend: Blend) {
     let opacity = t.opacity.clamp(0.0, 1.0);
     if opacity <= 0.0 || t.scale <= 0.0 || reveal_from >= 1.0 {
         return;
     }
     let (w, h) = (dst.width as usize, dst.height as usize);
     let min_x = (reveal_from.max(0.0) * w as f32).round() as usize;
-    if t.scale == 1.0 && t.x == 0.0 && t.y == 0.0 && min_x == 0 {
+    let turn = t.rotation % 360.0;
+    if t.scale == 1.0 && t.x == 0.0 && t.y == 0.0 && min_x == 0 && turn == 0.0 {
         let o = (opacity * 255.0).round() as u32;
         for (d, s) in dst.data.chunks_exact_mut(4).zip(src.data.chunks_exact(4)) {
-            over(d, [s[0] as f32, s[1] as f32, s[2] as f32], (s[3] as u32 * o / 255) as f32 / 255.0);
+            over(d, [s[0] as f32, s[1] as f32, s[2] as f32], (s[3] as u32 * o / 255) as f32 / 255.0, blend);
         }
         return;
     }
-    // Where the scaled picture lands, then sample the source for each pixel.
+    // Where the scaled, turned picture lands, then sample the source for each pixel.
     let (cx, cy) = (w as f32 / 2.0 + t.x * w as f32, h as f32 / 2.0 + t.y * h as f32);
     let (half_w, half_h) = (w as f32 * t.scale / 2.0, h as f32 * t.scale / 2.0);
-    let x0 = ((cx - half_w).floor().max(0.0) as usize).max(min_x);
-    let x1 = ((cx + half_w).ceil() as usize).min(w);
-    let y0 = (cy - half_h).floor().max(0.0) as usize;
-    let y1 = ((cy + half_h).ceil() as usize).min(h);
+    let (sin, cos) = turn.to_radians().sin_cos();
+    let reach_x = half_w * cos.abs() + half_h * sin.abs();
+    let reach_y = half_w * sin.abs() + half_h * cos.abs();
+    let x0 = ((cx - reach_x).floor().max(0.0) as usize).max(min_x);
+    let x1 = ((cx + reach_x).ceil().max(0.0) as usize).min(w);
+    let y0 = (cy - reach_y).floor().max(0.0) as usize;
+    let y1 = ((cy + reach_y).ceil().max(0.0) as usize).min(h);
     for y in y0..y1 {
-        let sy = (y as f32 + 0.5 - cy) / t.scale + h as f32 / 2.0 - 0.5;
+        let dy = y as f32 + 0.5 - cy;
         for x in x0..x1 {
-            let sx = (x as f32 + 0.5 - cx) / t.scale + w as f32 / 2.0 - 0.5;
+            let dx = x as f32 + 0.5 - cx;
+            // Turn back by the rotation to find the source pixel.
+            let (ux, uy) = (dx * cos + dy * sin, -dx * sin + dy * cos);
+            let sx = ux / t.scale + w as f32 / 2.0 - 0.5;
+            let sy = uy / t.scale + h as f32 / 2.0 - 0.5;
             if let Some((rgb, a)) = sample(src, sx, sy) {
                 let i = (y * w + x) * 4;
-                over(&mut dst.data[i..i + 4], rgb, a * opacity);
+                over(&mut dst.data[i..i + 4], rgb, a * opacity, blend);
             }
         }
     }
 }
 
 #[inline]
-fn over(d: &mut [u8], rgb: [f32; 3], a: f32) {
+fn over(d: &mut [u8], rgb: [f32; 3], a: f32, blend: Blend) {
     if a <= 0.0 {
         return;
     }
+    // On a see-through frame (inside a group) there is nothing to mix with
+    // yet, so the colour is kept and the transparency is added up.
+    let below = d[3] as f32 / 255.0;
+    let out_a = a + below * (1.0 - a);
     for c in 0..3 {
-        d[c] = (rgb[c] * a + d[c] as f32 * (1.0 - a)).round().clamp(0.0, 255.0) as u8;
+        let dc = d[c] as f32;
+        let s = if blend == Blend::Normal { rgb[c] } else { blend.mix(rgb[c], dc) * below + rgb[c] * (1.0 - below) };
+        let v = (s * a + dc * below * (1.0 - a)) / out_a.max(1e-6);
+        d[c] = v.round().clamp(0.0, 255.0) as u8;
     }
-    d[3] = 255;
+    d[3] = (out_a * 255.0).round().clamp(0.0, 255.0) as u8;
 }
 
 /// Bilinear sample with transparency; `None` outside the picture.
